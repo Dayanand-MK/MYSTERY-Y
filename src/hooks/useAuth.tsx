@@ -180,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const { data: sessionData, error: sessionErr } = await supabase
           .from('investigation_sessions')
-          .select('id, started_at, status')
+          .select('id, team_id, started_at, status')
           .eq('id', session.id)
           .maybeSingle();
 
@@ -189,7 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // clearing the session and causing a redirect loop
           console.warn('[MYSTERY-Y][SYNC] Session DB query failed (RLS/network), trusting localStorage:', sessionErr.message);
           setCurrentSession(session);
-        } else if (sessionData) {
+        } else if (sessionData && sessionData.team_id === team.id) {
           // Confirmed from DB
           const freshSession: ParticipantSession = {
             id: sessionData.id,
@@ -199,11 +199,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setCurrentSession(freshSession);
           localStorage.setItem('mystery_y_session', JSON.stringify(freshSession));
         } else {
-          // Session genuinely not in DB
-          console.warn('[MYSTERY-Y][SYNC] Session not found in DB — will trust localStorage started_at for timer');
-          // Still set it from localStorage so Investigation can render
-          // (it may have been written by beginInvestigation before RLS index updated)
-          setCurrentSession(session);
+          // A missing or another-team session must never be restored.
+          console.warn('[MYSTERY-Y][SYNC] Stored session is missing or belongs to another team — clearing it');
+          setCurrentSession(null);
+          localStorage.removeItem('mystery_y_session');
+          localStorage.removeItem('mystery_y_session_id');
+          localStorage.removeItem('mystery_y_submission_id');
         }
       } else {
         setCurrentSession(null);
@@ -286,6 +287,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ): Promise<boolean> => {
     setIsParticipantLoading(true);
     setParticipantError(null);
+    // Registration creates a new participant context; stale session state must
+    // never cross from a previous team into this one.
+    setCurrentTeam(null);
+    setCurrentSession(null);
+    ['mystery_y_team', 'mystery_y_session', 'mystery_y_team_id', 'mystery_y_session_id', 'mystery_y_submission_id', 'mystery_y_active_section']
+      .forEach((key) => localStorage.removeItem(key));
     try {
       // 1. Fetch Event ID based on Name (with fallback to first open event)
       let targetEvent: { id: string; status: string } | null = null;
@@ -396,6 +403,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setCurrentSession(sessionInfo);
         localStorage.setItem('mystery_y_session', JSON.stringify(sessionInfo));
         localStorage.setItem('mystery_y_session_id', sessionInfo.id);
+        if (rpcData.submission_id) localStorage.setItem('mystery_y_submission_id', rpcData.submission_id);
+        localStorage.setItem('mystery_y_active_section', 'brief');
         return true;
       }
 

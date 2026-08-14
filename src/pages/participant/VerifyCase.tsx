@@ -15,10 +15,10 @@ export default function VerifyCase() {
 
   // Auto-redirect if active session is already present
   useEffect(() => {
-    if (currentSession) {
+    if (currentSession && !isStarting) {
       navigate('/investigation');
     }
-  }, [currentSession, navigate]);
+  }, [currentSession, isStarting, navigate]);
 
   useEffect(() => {
     if (!currentTeam) {
@@ -63,21 +63,16 @@ export default function VerifyCase() {
     setStartError(null);
     console.debug('[MYSTERY Y][VERIFY] Begin investigation triggered');
 
-    // 1. Request fullscreen in the user gesture context
-    try {
-      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen().catch((err) => {
-          console.warn('[MYSTERY Y][VERIFY] Fullscreen request could not be completed immediately:', err);
-        });
-      }
-    } catch (fsErr) {
-      console.warn('[MYSTERY Y][VERIFY] Fullscreen API error:', fsErr);
-    }
-
-    // 2. Begin investigation session
+    // Start the server-side session before enabling fullscreen/security monitoring.
     try {
       const success = await beginInvestigation();
       if (success) {
+        localStorage.setItem('mystery_y_active_section', 'brief');
+        try {
+          if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+        } catch (fsErr) {
+          console.warn('[MYSTERY Y][VERIFY] Fullscreen request could not be completed:', fsErr);
+        }
         console.debug('[MYSTERY Y][VERIFY] Investigation started — navigating to /investigation');
         navigate('/investigation');
       } else {

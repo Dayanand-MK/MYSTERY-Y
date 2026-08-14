@@ -585,10 +585,12 @@ class MockSupabaseClient {
         const existing = sessions.find((s: any) => s.team_id === p_team_id && s.case_id === p_case_id);
 
         if (existing) {
+          const existingSubmission = db.query<any>('submissions').find((s: any) => s.session_id === existing.id);
           return {
             data: {
               success: true,
               session_id: existing.id,
+              submission_id: existingSubmission?.id,
               started_at: existing.started_at,
               status: existing.status,
               recovered: true
@@ -643,6 +645,7 @@ class MockSupabaseClient {
         // Create submission row so useParticipantSession can find it via DB query
         const submissions = db.query<any>('submissions');
         const existingSub = submissions.find((s: any) => s.team_id === p_team_id && s.case_id === p_case_id);
+        let submissionId = existingSub?.id;
         if (!existingSub) {
           const subCount = submissions.length;
           const newSub = {
@@ -659,12 +662,14 @@ class MockSupabaseClient {
             created_at: startTimestamp,
           };
           db.save('submissions', [...submissions, newSub]);
+          submissionId = newSub.id;
         }
 
         return {
           data: {
             success: true,
             session_id: newSessionId,
+            submission_id: submissionId,
             started_at: startTimestamp,
             status: 'active',
             recovered: false

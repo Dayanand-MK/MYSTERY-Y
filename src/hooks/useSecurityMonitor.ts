@@ -24,9 +24,19 @@ export function useSecurityMonitor(teamId: string | null | undefined, sessionId:
   const lastEventAtRef = useRef(0);
   const fullscreenWasActiveRef = useRef(false);
   const wasLockedRef = useRef(false);
+  const trackedSessionRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     contextRef.current = { teamId, sessionId, fullscreenMonitoringActive };
+    if (trackedSessionRef.current !== sessionId) {
+      trackedSessionRef.current = sessionId;
+      fullscreenWasActiveRef.current = false;
+      wasLockedRef.current = false;
+      setViolations(0);
+      setIsLocked(false);
+      setActiveWarning(null);
+      setSessionRestored(false);
+    }
     if (fullscreenMonitoringActive) fullscreenWasActiveRef.current = true;
   }, [teamId, sessionId, fullscreenMonitoringActive]);
 

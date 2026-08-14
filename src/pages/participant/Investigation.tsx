@@ -45,6 +45,7 @@ interface CaseData {
 
 interface SubmissionRow {
   id: string;
+  session_id: string;
   started_at: string;
   is_finalized: boolean;
 }
@@ -184,18 +185,19 @@ export default function Investigation() {
       if (storedSubId) {
         const { data: subById } = await supabase
           .from('submissions')
-          .select('id, started_at, is_finalized')
+          .select('id, session_id, started_at, is_finalized')
           .eq('id', storedSubId)
           .maybeSingle();
-        if (subById) activeSub = subById as SubmissionRow;
+        if (subById && subById.session_id === currentSession.id) activeSub = subById as SubmissionRow;
       }
 
       if (!activeSub) {
         const { data: subByTeam } = await supabase
           .from('submissions')
-          .select('id, started_at, is_finalized')
+          .select('id, session_id, started_at, is_finalized')
           .eq('team_id', currentTeam.id)
           .eq('case_id', currentTeam.case_id)
+          .eq('session_id', currentSession.id)
           .order('started_at', { ascending: false })
           .limit(1)
           .maybeSingle();
