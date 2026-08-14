@@ -1764,3 +1764,83 @@ VALUES
 ON CONFLICT (code) DO NOTHING;
 
 
+-- =========================================================================
+-- 6. BEGIN INVESTIGATION TRANSACTION FUNCTION
+--    Called by useAuth.tsx → beginInvestigation() via supabase.rpc(...)
+--    Falls back gracefully: reuses an existing session if one already exists.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.begin_investigation_transaction(
+  p_team_id   UUID,
+  p_case_id   UUID,
+  p_code_id   UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_session    investigation_sessions%ROWTYPE;
+  v_submission submissions%ROWTYPE;
+  v_sess_id    UUID;
+  v_started_at TIMESTAMPTZ;
+BEGIN
+  -- 1. Reuse an existing session for this team (idempotent)
+  SELECT * INTO v_session
+  FROM public.investigation_sessions
+  WHERE team_id = p_team_id
+  ORDER BY started_at DESC
+  LIMIT 1;
+
+  IF v_session.id IS NULL THEN
+    -- 2. Create a new session
+    INSERT INTO public.investigation_sessions (team_id, case_id, status, started_at)
+    VALUES (p_team_id, p_case_id, 'active', NOW())
+    RETURNING * INTO v_session;
+
+    -- 3. Mark access code as used (best-effort)
+    IF p_code_id IS NOT NULL THEN
+      UPDATE public.case_access_codes
+      SET status = 'used', team_id = p_team_id
+      WHERE id = p_code_id AND status = 'available';
+    END IF;
+
+    -- 4. Mark team as active
+    UPDATE public.teams
+    SET status = 'active'
+    WHERE id = p_team_id;
+  END IF;
+
+  -- 5. Ensure submission row exists (idempotent)
+  SELECT * INTO v_submission
+  FROM public.submissions
+  WHERE team_id = p_team_id AND case_id = p_case_id
+  LIMIT 1;
+
+  IF v_submission.id IS NULL THEN
+    INSERT INTO public.submissions (team_id, case_id, session_id, started_at)
+    VALUES (p_team_id, p_case_id, v_session.id, v_session.started_at)
+    RETURNING * INTO v_submission;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success',        true,
+    'session_id',     v_session.id,
+    'submission_id',  v_submission.id,
+    'started_at',     v_session.started_at,
+    'status',         v_session.status
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object(
+    'success', false,
+    'error',   SQLERRM
+  );
+END;
+$$;
+
+-- Grant execute to anon and authenticated roles
+GRANT EXECUTE ON FUNCTION public.begin_investigation_transaction(UUID, UUID, UUID)
+  TO anon, authenticated;
+
+
+

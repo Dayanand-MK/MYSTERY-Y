@@ -323,42 +323,150 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Start Investigation Session (RPC transaction check)
+  // Start Investigation Session — tries RPC first, falls back to direct table queries
   const beginInvestigation = async (): Promise<boolean> => {
-    if (!currentTeam) return false;
+    if (!currentTeam) {
+      console.warn('[MYSTERY Y][BEGIN] No currentTeam — aborting');
+      return false;
+    }
     setIsParticipantLoading(true);
     setParticipantError(null);
     try {
       const codeId = localStorage.getItem('mystery_y_access_code_id') || '';
+      console.debug('[MYSTERY Y][BEGIN] Attempting RPC begin_investigation_transaction for team:', currentTeam.id);
 
-      const { data, error } = await supabase.rpc('begin_investigation_transaction', {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('begin_investigation_transaction', {
         p_team_id: currentTeam.id,
         p_case_id: currentTeam.case_id,
         p_code_id: codeId
       });
 
-      if (error) {
-        setParticipantError(error.message);
+      // ── RPC succeeded ──────────────────────────────────────────────────────
+      if (!rpcError && rpcData) {
+        if (!rpcData.success) {
+          console.warn('[MYSTERY Y][BEGIN] RPC returned failure:', rpcData.error);
+          setParticipantError(rpcData.error || 'Investigation could not be started');
+          return false;
+        }
+
+        const sessionInfo: ParticipantSession = {
+          id: rpcData.session_id,
+          started_at: rpcData.started_at,
+          status: rpcData.status || 'active',
+        };
+        console.debug('[MYSTERY Y][BEGIN] RPC success — session:', sessionInfo.id);
+        setCurrentSession(sessionInfo);
+        localStorage.setItem('mystery_y_session', JSON.stringify(sessionInfo));
+        localStorage.setItem('mystery_y_session_id', sessionInfo.id);
+        return true;
+      }
+
+      // ── RPC missing or failed — fallback to direct table queries ─────────
+      console.warn('[MYSTERY Y][BEGIN] RPC error or missing, using direct fallback. RPC error:', rpcError?.message);
+
+      // Step 1: Check for an existing investigation session for this team
+      const { data: existingSess, error: sessQueryErr } = await supabase
+        .from('investigation_sessions')
+        .select('id, started_at, status, team_id, case_id')
+        .eq('team_id', currentTeam.id)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessQueryErr) {
+        console.error('[MYSTERY Y][BEGIN] Failed to query existing sessions:', sessQueryErr.message);
+        setParticipantError('Failed to verify investigation session: ' + sessQueryErr.message);
         return false;
       }
 
-      if (data && !data.success) {
-        setParticipantError(data.error);
-        return false;
+      let activeSession = existingSess;
+
+      // Step 2: If no session, create one
+      if (!activeSession) {
+        console.debug('[MYSTERY Y][BEGIN] No existing session — creating new investigation_sessions row');
+        const { data: newSess, error: insertSessErr } = await supabase
+          .from('investigation_sessions')
+          .insert({
+            team_id: currentTeam.id,
+            case_id: currentTeam.case_id,
+            status: 'active',
+            started_at: new Date().toISOString(),
+          })
+          .select('id, started_at, status, team_id, case_id')
+          .single();
+
+        if (insertSessErr || !newSess) {
+          console.error('[MYSTERY Y][BEGIN] Failed to create session:', insertSessErr?.message);
+          setParticipantError('Failed to create investigation session: ' + (insertSessErr?.message || 'Unknown error'));
+          return false;
+        }
+        activeSession = newSess;
+        console.debug('[MYSTERY Y][BEGIN] Created session:', activeSession.id);
+
+        // Mark access code as used (best-effort)
+        if (codeId) {
+          await supabase
+            .from('case_access_codes')
+            .update({ status: 'used', team_id: currentTeam.id })
+            .eq('id', codeId);
+        }
+
+        // Mark team status as active (best-effort)
+        await supabase
+          .from('teams')
+          .update({ status: 'active' })
+          .eq('id', currentTeam.id);
+      } else {
+        console.debug('[MYSTERY Y][BEGIN] Reusing existing session:', activeSession.id);
+      }
+
+      // Step 3: Ensure a submission row exists
+      const { data: existingSub } = await supabase
+        .from('submissions')
+        .select('id')
+        .eq('team_id', currentTeam.id)
+        .eq('case_id', currentTeam.case_id)
+        .maybeSingle();
+
+      if (!existingSub) {
+        console.debug('[MYSTERY Y][BEGIN] Creating submissions row');
+        const { data: newSub, error: subErr } = await supabase
+          .from('submissions')
+          .insert({
+            team_id: currentTeam.id,
+            case_id: currentTeam.case_id,
+            session_id: activeSession.id,
+            started_at: activeSession.started_at,
+          })
+          .select('id')
+          .single();
+
+        if (newSub) {
+          localStorage.setItem('mystery_y_submission_id', newSub.id);
+          console.debug('[MYSTERY Y][BEGIN] Submission created:', newSub.id);
+        } else {
+          console.warn('[MYSTERY Y][BEGIN] Submission creation failed (non-fatal):', subErr?.message);
+        }
+      } else {
+        localStorage.setItem('mystery_y_submission_id', existingSub.id);
+        console.debug('[MYSTERY Y][BEGIN] Existing submission found:', existingSub.id);
       }
 
       const sessionInfo: ParticipantSession = {
-        id: data.session_id,
-        started_at: data.started_at,
-        status: data.status,
+        id: activeSession.id,
+        started_at: activeSession.started_at,
+        status: activeSession.status || 'active',
       };
 
       setCurrentSession(sessionInfo);
       localStorage.setItem('mystery_y_session', JSON.stringify(sessionInfo));
       localStorage.setItem('mystery_y_session_id', sessionInfo.id);
+      console.debug('[MYSTERY Y][BEGIN] Investigation started via fallback — session:', sessionInfo.id);
       return true;
     } catch (err: any) {
-      setParticipantError(err.message || 'Failed to start investigation');
+      const msg = err?.message || 'Failed to start investigation';
+      console.error('[MYSTERY Y][BEGIN] Unexpected error:', msg);
+      setParticipantError(msg);
       return false;
     } finally {
       setIsParticipantLoading(false);

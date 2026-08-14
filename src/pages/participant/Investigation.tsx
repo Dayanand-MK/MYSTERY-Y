@@ -23,7 +23,15 @@ import {
 
 export default function Investigation() {
   const navigate = useNavigate();
-  const { team, session, caseInfo, loading: sessionLoading, error: sessionError } = useParticipantSession();
+  const {
+    status: sessionStatus,
+    team,
+    session,
+    caseInfo,
+    loading: sessionLoading,
+    error: sessionError,
+    restoreSession,
+  } = useParticipantSession();
 
   const [questions, setQuestions] = useState<any[]>([]);
   const [options, setOptions] = useState<any[]>([]);
@@ -127,7 +135,8 @@ export default function Investigation() {
     session?.id
   );
 
-  if (sessionLoading || isDataLoading || !team || !session || !caseInfo) {
+  // ── Loading state ─────────────────────────────────────────────────────────
+  if (sessionLoading || isDataLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-detective-dark font-mono text-sm text-detective-muted">
         <Clock className="w-8 h-8 animate-spin text-detective-crimson mb-3" />
@@ -140,6 +149,46 @@ export default function Investigation() {
       </div>
     );
   }
+
+  // ── Error / missing-session state ─────────────────────────────────────────
+  if (sessionStatus === 'error' || !session || !team || !caseInfo) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-detective-dark font-mono px-4">
+        <div className="max-w-md w-full bg-detective-panel border border-detective-crimson/50 rounded-lg p-8 text-center">
+          <AlertTriangle className="w-10 h-10 text-detective-crimson mx-auto mb-4" />
+          <div className="text-detective-crimson font-bold tracking-widest text-base mb-2 uppercase">
+            [ INVESTIGATION SESSION ERROR ]
+          </div>
+          {sessionError ? (
+            <div className="text-detective-muted text-xs mb-6 leading-relaxed">{sessionError}</div>
+          ) : !session ? (
+            <div className="text-detective-muted text-xs mb-6 leading-relaxed">
+              No active investigation session was found. You may need to begin your investigation first.
+            </div>
+          ) : (
+            <div className="text-detective-muted text-xs mb-6 leading-relaxed">
+              Session data could not be loaded. Check your connection and retry.
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => restoreSession()}
+              className="w-full bg-detective-crimson/20 border border-detective-crimson/50 text-detective-crimson font-bold py-2 px-4 rounded text-xs tracking-wider hover:bg-detective-crimson/30 transition-colors"
+            >
+              [ RETRY ]
+            </button>
+            <button
+              onClick={() => navigate('/verify-case')}
+              className="w-full border border-detective-border text-detective-muted py-2 px-4 rounded text-xs tracking-wider hover:bg-detective-panel transition-colors"
+            >
+              [ RETURN TO CASE BRIEFING ]
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
 
   // Calculate answered questions helper
   const answeredCount = questions.filter((q) => {

@@ -3,14 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import CaseBriefing from '../../components/evidence/CaseBriefing';
-import { Loader } from 'lucide-react';
+import { Loader, AlertTriangle } from 'lucide-react';
 
 export default function VerifyCase() {
   const navigate = useNavigate();
-  const { currentTeam, currentSession, beginInvestigation, participantError } = useAuth();
+  const { currentTeam, currentSession, beginInvestigation } = useAuth();
   const [caseDetails, setCaseDetails] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   // Auto-redirect if active session is already present
   useEffect(() => {
@@ -57,12 +58,29 @@ export default function VerifyCase() {
   }, [currentTeam, navigate]);
 
   const handleStart = async () => {
+    if (isStarting) return; // double-click guard
     setIsStarting(true);
-    const success = await beginInvestigation();
-    setIsStarting(false);
-    if (success) {
-      navigate('/investigation');
+    setStartError(null);
+    console.debug('[MYSTERY Y][VERIFY] Begin investigation triggered');
+    try {
+      const success = await beginInvestigation();
+      if (success) {
+        console.debug('[MYSTERY Y][VERIFY] Investigation started — navigating to /investigation');
+        navigate('/investigation');
+      } else {
+        setStartError('Failed to initialise investigation. Please check your connection and retry.');
+      }
+    } catch (err: any) {
+      console.error('[MYSTERY Y][VERIFY] Unexpected error starting investigation:', err);
+      setStartError(err?.message || 'An unexpected error occurred. Please retry.');
+    } finally {
+      setIsStarting(false);
     }
+  };
+
+  const handleRetry = () => {
+    setStartError(null);
+    handleStart();
   };
 
   if (isLoading || !currentTeam || !caseDetails) {
@@ -76,9 +94,23 @@ export default function VerifyCase() {
 
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-center bg-detective-dark py-12 px-4 cctv-overlay overflow-y-auto">
-      {participantError && (
-        <div className="max-w-3xl w-full bg-detective-panel border border-detective-crimson/30 text-detective-alert px-4 py-3 rounded mb-4 font-mono text-xs uppercase tracking-wider flex items-center gap-2">
-          <span>⚠ WARNING:</span> {participantError}
+      {startError && (
+        <div className="max-w-3xl w-full bg-detective-panel border border-detective-crimson/50 text-detective-alert px-4 py-3 rounded mb-4 font-mono text-xs uppercase tracking-wider">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-detective-crimson flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold">⚠ INITIALISATION ERROR:</span>{' '}
+              <span className="text-detective-muted">{startError}</span>
+              <div className="mt-2">
+                <button
+                  onClick={handleRetry}
+                  className="text-detective-amber border border-detective-amber/50 px-3 py-1 rounded text-xs hover:bg-detective-amber/10 transition-colors"
+                >
+                  [ RETRY ]
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
       <CaseBriefing
