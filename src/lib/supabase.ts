@@ -399,11 +399,11 @@ class MockSupabaseClient {
           ...r
         }));
         db.save(table, [...currentData, ...addedRows]);
-        // Simulate Realtime alerts for security events
-        if (table === 'security_logs') {
-          const callbacks = realtimeCallbacks.get('security_logs') || [];
-          callbacks.forEach((cb) => cb({ new: addedRows[0] }));
-        }
+
+        // Simulate Realtime alerts for table changes
+        const callbacks = realtimeCallbacks.get(table) || [];
+        callbacks.forEach((cb) => cb({ eventType: 'INSERT', new: addedRows[0] }));
+
         return { data: addedRows, error: null };
       },
       update: (updates: any) => {
@@ -422,14 +422,22 @@ class MockSupabaseClient {
 
             const currentData = db.query<any>(table);
             let updatedCount = 0;
+            let updatedRow: any = null;
             const nextData = currentData.map((row: any) => {
               if (row[col] === val) {
                 updatedCount++;
-                return { ...row, ...updates, updated_at: new Date().toISOString() };
+                updatedRow = { ...row, ...updates, updated_at: new Date().toISOString() };
+                return updatedRow;
               }
               return row;
             });
             db.save(table, nextData);
+
+            if (updatedRow) {
+              const callbacks = realtimeCallbacks.get(table) || [];
+              callbacks.forEach((cb) => cb({ eventType: 'UPDATE', new: updatedRow }));
+            }
+
             return Promise.resolve({ data: updates, error: null, count: updatedCount });
           }
         };

@@ -62,6 +62,19 @@ export default function VerifyCase() {
     setIsStarting(true);
     setStartError(null);
     console.debug('[MYSTERY Y][VERIFY] Begin investigation triggered');
+
+    // 1. Request fullscreen in the user gesture context
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen().catch((err) => {
+          console.warn('[MYSTERY Y][VERIFY] Fullscreen request could not be completed immediately:', err);
+        });
+      }
+    } catch (fsErr) {
+      console.warn('[MYSTERY Y][VERIFY] Fullscreen API error:', fsErr);
+    }
+
+    // 2. Begin investigation session
     try {
       const success = await beginInvestigation();
       if (success) {

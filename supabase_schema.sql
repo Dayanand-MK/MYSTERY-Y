@@ -227,7 +227,7 @@ CREATE TABLE IF NOT EXISTS public.disciplinary_actions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
     session_id UUID REFERENCES public.investigation_sessions(id) ON DELETE SET NULL,
-    action TEXT NOT NULL CHECK (action IN ('warning', 'flag', 'disqualification')),
+    action TEXT NOT NULL CHECK (action IN ('warning', 'flag', 'disqualification', 'override_unlock')),
     reason TEXT NOT NULL,
     created_by UUID NOT NULL REFERENCES public.profiles(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
