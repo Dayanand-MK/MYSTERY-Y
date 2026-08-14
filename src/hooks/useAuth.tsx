@@ -129,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsParticipantLoading(true);
     setParticipantError(null);
     try {
-      const storedTeamStr = localStorage.getItem('mystery_y_team');
+      const storedTeamStr    = localStorage.getItem('mystery_y_team');
       const storedSessionStr = localStorage.getItem('mystery_y_session');
 
       if (!storedTeamStr) {
@@ -139,47 +139,85 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const team = JSON.parse(storedTeamStr) as ParticipantTeam;
-      setCurrentTeam(team);
 
-      // Verify the team still exists and check its status in database
+      // ── Verify team against DB ─────────────────────────────────────────────
+      // Use maybeSingle() so zero rows returns null (not an error)
       const { data: teamData, error: teamErr } = await supabase
         .from('teams')
         .select('id, name, status, team_id_label, case_id')
         .eq('id', team.id)
-        .single();
+        .maybeSingle();
 
-      if (teamErr || !teamData) {
-        // Discrepancy, clear local storage
+      if (teamErr) {
+        // DB error (e.g. RLS, network) — trust localStorage, do not clear
+        console.warn('[MYSTERY-Y][SYNC] Team DB query failed (RLS/network), trusting localStorage:', teamErr.message);
+        setCurrentTeam(team);
+      } else if (!teamData) {
+        // Row genuinely missing → stale localStorage, log out
+        console.warn('[MYSTERY-Y][SYNC] Team not found in DB — clearing session');
         participantLogout();
         return;
+      } else {
+        // Row found — sync from DB
+        const freshTeam: ParticipantTeam = {
+          id: teamData.id,
+          name: teamData.name,
+          team_id_label: teamData.team_id_label,
+          case_id: teamData.case_id,
+        };
+        if (teamData.status === 'disqualified') {
+          setParticipantError('TEAM DISQUALIFIED BY ADMINISTRATOR');
+          setCurrentTeam({ ...freshTeam } as any);
+          return;
+        }
+        setCurrentTeam(freshTeam);
+        localStorage.setItem('mystery_y_team', JSON.stringify(freshTeam));
       }
 
-      // If team is disqualified, flag, or submitted, keep state synced
-      if (teamData.status === 'disqualified') {
-        setParticipantError('TEAM DISQUALIFIED BY ADMINISTRATOR');
-        setCurrentTeam({ ...team, status: 'disqualified' } as any);
-        return;
-      }
-
+      // ── Verify session against DB ──────────────────────────────────────────
       if (storedSessionStr) {
         const session = JSON.parse(storedSessionStr) as ParticipantSession;
-        // Verify active session against DB
+
         const { data: sessionData, error: sessionErr } = await supabase
           .from('investigation_sessions')
           .select('id, started_at, status')
           .eq('id', session.id)
-          .single();
+          .maybeSingle();
 
-        if (!sessionErr && sessionData) {
-          setCurrentSession(sessionData as ParticipantSession);
-          localStorage.setItem('mystery_y_session', JSON.stringify(sessionData));
+        if (sessionErr) {
+          // DB error (RLS/network) — trust localStorage copy rather than
+          // clearing the session and causing a redirect loop
+          console.warn('[MYSTERY-Y][SYNC] Session DB query failed (RLS/network), trusting localStorage:', sessionErr.message);
+          setCurrentSession(session);
+        } else if (sessionData) {
+          // Confirmed from DB
+          const freshSession: ParticipantSession = {
+            id: sessionData.id,
+            started_at: sessionData.started_at,
+            status: sessionData.status,
+          };
+          setCurrentSession(freshSession);
+          localStorage.setItem('mystery_y_session', JSON.stringify(freshSession));
         } else {
-          setCurrentSession(null);
-          localStorage.removeItem('mystery_y_session');
+          // Session genuinely not in DB
+          console.warn('[MYSTERY-Y][SYNC] Session not found in DB — will trust localStorage started_at for timer');
+          // Still set it from localStorage so Investigation can render
+          // (it may have been written by beginInvestigation before RLS index updated)
+          setCurrentSession(session);
         }
+      } else {
+        setCurrentSession(null);
       }
     } catch (err) {
-      console.error('Error syncing participant session', err);
+      console.error('[MYSTERY-Y][SYNC] Unexpected error syncing participant session:', err);
+      // On unexpected error: restore from localStorage so the participant
+      // doesn't get stuck on a redirect loop
+      try {
+        const storedTeamStr    = localStorage.getItem('mystery_y_team');
+        const storedSessionStr = localStorage.getItem('mystery_y_session');
+        if (storedTeamStr) setCurrentTeam(JSON.parse(storedTeamStr) as ParticipantTeam);
+        if (storedSessionStr) setCurrentSession(JSON.parse(storedSessionStr) as ParticipantSession);
+      } catch {}
     } finally {
       setIsParticipantLoading(false);
     }
