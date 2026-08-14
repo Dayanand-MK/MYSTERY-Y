@@ -140,3 +140,5 @@ Enable Realtime for live monitoring on the admin dashboard:
 # Security-monitoring migration
 
 Before deploying this release, run [20260814_security_monitoring.sql](supabase/migrations/20260814_security_monitoring.sql) in the project's Supabase SQL Editor. It installs the atomic `record_security_violation` RPC, locks a session on its third incident, and adds `security_logs` to Realtime. Do not use the old direct client `security_logs` insert path.
+
+Then run [20260814_admin_security_unlock.sql](supabase/migrations/20260814_admin_security_unlock.sql). It adds the authenticated, role-checked admin-only session-unlock RPC and participant Realtime updates.

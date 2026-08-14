@@ -82,7 +82,7 @@ export default function SecurityWarning({
         <div className="text-sm text-stone-300 leading-relaxed mb-6 space-y-3 font-mono">
           <p className="text-[11px] uppercase text-detective-muted">
             {type === 'block'
-              ? 'Investigation session has been locked.'
+              ? 'Security violation limit reached. Your investigation session has been locked. Please wait for an event administrator to review your session.'
               : 'Investigation session integrity protocol triggered.'}
           </p>
 

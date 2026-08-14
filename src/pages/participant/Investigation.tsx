@@ -279,6 +279,8 @@ export default function Investigation() {
     lastEvent,
     isLocked,
     isTerminated,
+    sessionRestored,
+    dismissSessionRestored,
     dismissWarning
   } = useSecurityMonitor(
     phase === 'ready' || phase === 'locked' ? currentTeam?.id : undefined,
@@ -361,7 +363,9 @@ export default function Investigation() {
   }
 
   // ── Render: Ready / Active Workspace ───────────────────────────────────────
-  const isCurrentlyLocked = isLocked || violations >= 3;
+  // The server session status is authoritative: an admin can restore a 3/3 session
+  // without deleting its incident history.
+  const isCurrentlyLocked = isLocked;
 
   const answeredCount = questions.filter((q) => {
     const draft = drafts.find((d) => d.question_id === q.id);
@@ -384,6 +388,13 @@ export default function Investigation() {
           onReturnFullscreen={handleReturnFullscreen}
           eventType={lastEvent}
         />
+      )}
+
+      {sessionRestored && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[10000] bg-detective-green/95 border border-detective-green text-white px-5 py-3 rounded shadow-2xl text-xs font-bold tracking-wider">
+          [ SESSION RESTORED ] An administrator has authorized this investigation to continue.
+          <button onClick={dismissSessionRestored} className="ml-3 underline">DISMISS</button>
+        </div>
       )}
 
       {/* ── Top Command Bar ──────────────────────────────────────────────── */}

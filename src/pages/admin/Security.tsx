@@ -132,9 +132,9 @@ export default function Security() {
       const tLogs = logs.filter((l) => l.team_id === t.id);
       const count = tLogs.length;
       const sess = sessions.find((s) => s.team_id === t.id);
-      const hasUnlock = tLogs.some((l) => l.admin_action && l.admin_action.toLowerCase().includes('allow continue'));
+      const hasUnlock = count >= 3 && sess?.status === 'active';
       const isTerminated = t.status === 'disqualified' || t.status === 'terminated' || sess?.status === 'terminated';
-      const isLocked = count >= 3 && !hasUnlock && !isTerminated;
+      const isLocked = sess?.status === 'locked' && !isTerminated;
       map.set(t.id, { count, isLocked, isUnlocked: hasUnlock, isTerminated });
     });
     return map;
@@ -175,50 +175,13 @@ export default function Security() {
     setActionError(null);
 
     try {
-      const adminIdentity = `${adminUser.email} (${adminUser.role})`;
-      const timestamp = new Date().toISOString();
-      const resolutionNote = `ALLOW CONTINUE: ${actionReason.trim()} [Cleared by ${adminIdentity} at ${timestamp}]`;
-
-      // 1. Update all security logs for this team to reviewed with resolution note
-      const teamLogs = getTeamLogs(selectedTeamId);
-      for (const log of teamLogs) {
-        await supabase
-          .from('security_logs')
-          .update({
-            is_reviewed: true,
-            admin_action: resolutionNote,
-          })
-          .eq('id', log.id);
-      }
-
-      // 2. Ensure session status is active
       const sess = getTeamSession(selectedTeamId);
-      if (sess) {
-        await supabase
-          .from('investigation_sessions')
-          .update({ status: 'active' })
-          .eq('id', sess.id);
-      }
-
-      // 3. Log to disciplinary actions audit table
-      await supabase.from('disciplinary_actions').insert({
-        team_id: selectedTeamId,
-        session_id: sess?.id || null,
-        action: 'override_unlock',
-        reason: resolutionNote,
-        created_by: adminUser.id || 'b2ece65e-d728-4220-a40f-66f3234caeef',
+      if (!sess) throw new Error('No investigation session exists for this team.');
+      const { data, error } = await supabase.rpc('unlock_security_session', {
+        p_session_id: sess.id,
+        p_note: actionReason.trim(),
       });
-
-      // 4. Log to admin actions table
-      await supabase.from('admin_actions').insert({
-        admin_id: adminUser.id || 'b2ece65e-d728-4220-a40f-66f3234caeef',
-        action_type: 'SECURITY_ALLOW_CONTINUE',
-        details: {
-          team_id: selectedTeamId,
-          reason: actionReason.trim(),
-          timestamp,
-        },
-      });
+      if (error || !data?.success) throw new Error(error?.message || data?.error || 'Unable to unlock the investigation session.');
 
       await loadData();
       setActionType(null);
@@ -733,7 +696,7 @@ export default function Security() {
               <div className="bg-black/50 border border-detective-crimson rounded p-4 mb-4 space-y-3">
                 <div className="font-bold text-white uppercase text-xs flex items-center justify-between">
                   <span>
-                    {actionType === 'allow_continue' ? 'Confirm Supervisor Clearance Override' : 'Confirm Investigation Termination'}
+                    {actionType === 'allow_continue' ? 'Unlock Investigation Session?' : 'Confirm Investigation Termination'}
                   </span>
                   <button onClick={() => setActionType(null)} className="text-detective-muted hover:text-white">
                     <X className="w-4 h-4" />
@@ -742,7 +705,7 @@ export default function Security() {
 
                 <p className="text-[11px] text-stone-300">
                   {actionType === 'allow_continue'
-                    ? 'Allowing continue will unlock the session while preserving all 3/3 historical incident logs. Enter the clearance rationale:'
+                    ? `Team: ${activeReviewTeam.team_id_label} • Current violations: ${activeReviewMetrics?.count || 3} / 3. This preserves security history and allows the participant to continue. Enter the unlock note:`
                     : 'Terminating will permanently finalize this investigation. Enter the termination reason:'}
                 </p>
 
@@ -780,7 +743,7 @@ export default function Security() {
                     ) : (
                       <Check className="w-3.5 h-3.5" />
                     )}
-                    {actionType === 'allow_continue' ? 'Authorize Continue' : 'Confirm Termination'}
+                    {actionType === 'allow_continue' ? 'Confirm Unlock' : 'Confirm Termination'}
                   </button>
                 </div>
               </div>

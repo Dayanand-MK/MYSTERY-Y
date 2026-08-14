@@ -692,9 +692,33 @@ class MockSupabaseClient {
           severity: locked ? 'high' : 'medium', is_reviewed: false, created_at: new Date().toISOString(),
         };
         db.save('security_logs', [...logs, log]);
-        if (locked) { sessions[sessionIndex] = { ...sessions[sessionIndex], status: 'flagged' }; db.save('investigation_sessions', sessions); }
+        if (locked) {
+          sessions[sessionIndex] = { ...sessions[sessionIndex], status: 'locked' };
+          db.save('investigation_sessions', sessions);
+          (realtimeCallbacks.get('investigation_sessions') || []).forEach((callback) => callback({ eventType: 'UPDATE', new: sessions[sessionIndex] }));
+        }
         (realtimeCallbacks.get('security_logs') || []).forEach((callback) => callback({ eventType: 'INSERT', new: log }));
         return { data: result, error: null };
+      }
+
+      if (functionName === 'unlock_security_session') {
+        const { p_session_id, p_note } = args;
+        const sessions = db.query<any>('investigation_sessions');
+        const index = sessions.findIndex((s: any) => s.id === p_session_id);
+        if (index < 0) return { data: { success: false, error: 'SESSION_NOT_FOUND' }, error: null };
+        if (sessions[index].status !== 'locked') return { data: { success: false, error: 'SESSION_NOT_LOCKED' }, error: null };
+        const profile = db.query<any>('profiles').find((p: any) => p.email === localStorage.getItem('mystery_y_mock_email'));
+        if (!profile || !['super_admin', 'evaluator', 'coordinator'].includes(profile.role)) return { data: { success: false, error: 'UNAUTHORIZED_ADMIN' }, error: null };
+        sessions[index] = { ...sessions[index], status: 'active', last_seen_at: new Date().toISOString() };
+        db.save('investigation_sessions', sessions);
+        const action = { id: crypto.randomUUID(), team_id: sessions[index].team_id, session_id: p_session_id, action: 'override_unlock', reason: p_note || 'Security-session unlock approved by administrator', created_by: profile.id, created_at: new Date().toISOString() };
+        db.save('disciplinary_actions', [...db.query<any>('disciplinary_actions'), action]);
+        db.save('admin_actions', [...db.query<any>('admin_actions'), {
+          id: crypto.randomUUID(), admin_id: profile.id, action_type: 'SECURITY_SESSION_UNLOCK',
+          details: { team_id: sessions[index].team_id, session_id: p_session_id, admin_email: profile.email, note: p_note || null }, created_at: new Date().toISOString(),
+        }]);
+        (realtimeCallbacks.get('investigation_sessions') || []).forEach((callback) => callback({ eventType: 'UPDATE', new: sessions[index] }));
+        return { data: { success: true, session_id: p_session_id, team_id: sessions[index].team_id, unlocked_by: profile.email, unlocked_at: new Date().toISOString() }, error: null };
       }
 
       if (functionName === 'submit_investigation_transaction') {

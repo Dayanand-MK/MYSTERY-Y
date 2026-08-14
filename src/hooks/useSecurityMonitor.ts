@@ -18,10 +18,12 @@ export function useSecurityMonitor(teamId: string | null | undefined, sessionId:
   const [activeWarning, setActiveWarning] = useState<WarningType | null>(null);
   const [lastEvent, setLastEvent] = useState('TAB SWITCH DETECTED');
   const [isLocked, setIsLocked] = useState(false);
+  const [sessionRestored, setSessionRestored] = useState(false);
   const contextRef = useRef({ teamId, sessionId, fullscreenMonitoringActive });
   const inFlightRef = useRef(false);
   const lastEventAtRef = useRef(0);
   const fullscreenWasActiveRef = useRef(false);
+  const wasLockedRef = useRef(false);
 
   useEffect(() => {
     contextRef.current = { teamId, sessionId, fullscreenMonitoringActive };
@@ -43,11 +45,20 @@ export function useSecurityMonitor(teamId: string | null | undefined, sessionId:
   const loadSecurityState = useCallback(async () => {
     const { sessionId: currentSessionId } = contextRef.current;
     if (!currentSessionId) return;
-    const { data, error } = await supabase.from('security_logs').select('id').eq('session_id', currentSessionId);
-    if (error) return console.error('[SECURITY ERROR] Unable to load security state.', error);
-    const count = data?.length || 0;
+    const [logsResult, sessionResult] = await Promise.all([
+      supabase.from('security_logs').select('id').eq('session_id', currentSessionId),
+      supabase.from('investigation_sessions').select('status').eq('id', currentSessionId).maybeSingle(),
+    ]);
+    if (logsResult.error || sessionResult.error) return console.error('[SECURITY ERROR] Unable to load security state.', logsResult.error || sessionResult.error);
+    const count = logsResult.data?.length || 0;
+    const locked = sessionResult.data?.status === 'locked';
     setViolations(Math.min(MAX_VIOLATIONS, count));
-    setIsLocked(count >= MAX_VIOLATIONS);
+    setIsLocked(locked);
+    if (wasLockedRef.current && !locked && sessionResult.data?.status === 'active') {
+      setActiveWarning(null);
+      setSessionRestored(true);
+    }
+    wasLockedRef.current = locked;
   }, []);
 
   const recordSecurityViolation = useCallback(async (eventType: SecurityEventType) => {
@@ -106,10 +117,13 @@ export function useSecurityMonitor(teamId: string | null | undefined, sessionId:
 
   useEffect(() => {
     void loadSecurityState();
-    const channel = supabase.channel(`security-monitor-${sessionId || 'none'}`).on('postgres_changes', { event: '*', schema: 'public', table: 'security_logs', filter: `session_id=eq.${sessionId}` }, loadSecurityState).subscribe();
+    const channel = supabase.channel(`security-monitor-${sessionId || 'none'}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'security_logs', filter: `session_id=eq.${sessionId}` }, loadSecurityState)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'investigation_sessions', filter: `id=eq.${sessionId}` }, loadSecurityState)
+      .subscribe();
     const poll = window.setInterval(loadSecurityState, 6000);
     return () => { window.clearInterval(poll); supabase.removeChannel(channel); };
   }, [loadSecurityState, sessionId]);
 
-  return { violations, activeWarning, lastEvent, isLocked, isTerminated: false, dismissWarning: () => { if (!isLocked) setActiveWarning(null); }, recordSecurityViolation };
+  return { violations, activeWarning, lastEvent, isLocked, isTerminated: false, sessionRestored, dismissWarning: () => { if (!isLocked) setActiveWarning(null); }, dismissSessionRestored: () => setSessionRestored(false), recordSecurityViolation };
 }
