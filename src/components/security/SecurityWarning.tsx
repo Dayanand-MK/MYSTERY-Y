@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { ShieldAlert, Lock, AlertTriangle, Key, Maximize2 } from 'lucide-react';
+import { ShieldAlert, Lock, AlertTriangle, Key, Maximize2, RefreshCw } from 'lucide-react';
 
 export interface SecurityWarningProps {
   type: 'warn_1' | 'warn_2' | 'block';
   violations: number;
   onDismiss: () => void;
   onAdminUnlock?: () => void;
-  onReturnFullscreen?: () => void;
+  onReturnFullscreen?: () => Promise<void> | void;
   eventType?: string;
 }
 
@@ -20,8 +20,11 @@ export default function SecurityWarning({
 }: SecurityWarningProps) {
   const [adminPin, setAdminPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [fullscreenFailed, setFullscreenFailed] = useState(false);
+  const [isRestoringFs, setIsRestoringFs] = useState(false);
 
   const isFullscreenExit = eventType.toUpperCase().includes('FULLSCREEN');
+  const cappedAttempts = Math.min(3, Math.max(1, violations));
 
   const handleUnlockAttempt = (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,16 +41,29 @@ export default function SecurityWarning({
     }
   };
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (isFullscreenExit && onReturnFullscreen) {
-      onReturnFullscreen();
+      setIsRestoringFs(true);
+      setFullscreenFailed(false);
+      try {
+        await onReturnFullscreen();
+        if (!document.fullscreenElement) {
+          // If still not fullscreen after attempt
+          setFullscreenFailed(true);
+        }
+      } catch (err) {
+        console.warn('Fullscreen restore failed', err);
+        setFullscreenFailed(true);
+      } finally {
+        setIsRestoringFs(false);
+      }
     } else {
       onDismiss();
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex items-center justify-center p-4 font-mono select-none">
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[9999] flex items-center justify-center p-4 font-mono select-none">
       
       {/* Scanline animation overlay */}
       <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10 overflow-hidden">
@@ -78,14 +94,14 @@ export default function SecurityWarning({
         
         <div className="text-xs font-bold text-detective-alert uppercase tracking-widest mb-4 flex items-center justify-center gap-1.5">
           <AlertTriangle className="w-4 h-4" />
-          {type === 'block' ? 'MAXIMUM SECURITY INCIDENTS REACHED' : 'SECURITY INCIDENT DETECTED'}
+          {type === 'block' ? 'MAXIMUM SECURITY ATTEMPTS REACHED' : 'SECURITY INCIDENT DETECTED'}
         </div>
 
         {/* Description Details */}
         <div className="text-sm text-stone-300 leading-relaxed mb-6 space-y-3 font-mono">
           <p className="text-[11px] uppercase text-detective-muted">
             {type === 'block'
-              ? 'Investigation session has been temporarily locked.'
+              ? 'Investigation session has been locked.'
               : 'Investigation session integrity protocol triggered.'}
           </p>
 
@@ -94,8 +110,14 @@ export default function SecurityWarning({
           </div>
 
           <div className="text-sm font-bold tracking-widest text-white bg-black/40 py-1.5 px-3 rounded border border-detective-border">
-            SECURITY ATTEMPT: <span className={violations >= 3 ? 'text-detective-crimson' : 'text-detective-amber'}>{violations} / 3</span>
+            SECURITY ATTEMPT: <span className={type === 'block' || cappedAttempts >= 3 ? 'text-detective-crimson' : 'text-detective-amber'}>{cappedAttempts} / 3</span>
           </div>
+
+          {fullscreenFailed && (
+            <div className="bg-detective-crimson/15 border border-detective-crimson text-detective-alert p-2.5 rounded text-xs font-bold uppercase">
+              ⚠ Fullscreen Required: Please enable fullscreen to continue the investigation.
+            </div>
+          )}
 
           <p className="text-xs text-detective-text pt-1">
             {type === 'block' ? (
@@ -104,11 +126,11 @@ export default function SecurityWarning({
               </span>
             ) : isFullscreenExit ? (
               <span className="text-stone-300">
-                Fullscreen mode is mandatory during the investigation. Please return to fullscreen to continue.
+                Fullscreen mode is mandatory during the investigation. Return to fullscreen to continue.
               </span>
             ) : (
               <span className="text-stone-300">
-                Departing the investigation window or modifying clipboard content is strictly monitored.
+                Departing the investigation tab or copying/pasting is strictly monitored.
               </span>
             )}
           </p>
@@ -118,19 +140,30 @@ export default function SecurityWarning({
         {type !== 'block' ? (
           <button
             onClick={handleAction}
-            className="w-full flex items-center justify-center gap-2 bg-detective-crimson hover:bg-detective-alert text-white py-3 rounded uppercase font-bold tracking-widest text-xs transition-all shadow-[0_0_15px_rgba(211,47,47,0.3)] hover:shadow-[0_0_20px_rgba(211,47,47,0.5)] cursor-pointer"
+            disabled={isRestoringFs}
+            className="w-full flex items-center justify-center gap-2 bg-detective-crimson hover:bg-detective-alert text-white py-3 rounded uppercase font-bold tracking-widest text-xs transition-all shadow-[0_0_15px_rgba(211,47,47,0.3)] hover:shadow-[0_0_20px_rgba(211,47,47,0.5)] cursor-pointer disabled:opacity-50"
           >
-            {isFullscreenExit ? (
+            {isRestoringFs ? (
               <>
-                <Maximize2 className="w-4 h-4" /> [ RETURN TO FULLSCREEN ]
+                <RefreshCw className="w-4 h-4 animate-spin" /> [ RESTORING FULLSCREEN... ]
               </>
+            ) : isFullscreenExit ? (
+              fullscreenFailed ? (
+                <>
+                  <Maximize2 className="w-4 h-4" /> [ TRY AGAIN ]
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-4 h-4" /> [ RETURN TO FULLSCREEN ]
+                </>
+              )
             ) : (
               '[ CONTINUE ]'
             )}
           </button>
         ) : (
           <div className="space-y-4">
-            <div className="bg-detective-crimson/10 border border-detective-crimson/30 rounded p-3 text-[11px] text-detective-alert font-bold uppercase tracking-wider">
+            <div className="bg-detective-crimson/15 border border-detective-crimson rounded p-3 text-xs text-detective-alert font-bold uppercase tracking-wider">
               [ SESSION LOCKED ]
             </div>
 

@@ -45,12 +45,12 @@ export function useSecurityMonitor(
   const [isTerminated, setIsTerminated] = useState(false);
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
 
-  // De-duplication guards
+  // De-duplication and in-flight guards
   const isHandlingIncidentRef = useRef(false);
   const lastIncidentTimestampRef = useRef(0);
   const isMountedRef = useRef(true);
 
-  // Check if session has admin unlock or termination
+  // Check authoritative session and admin override status
   const checkSessionStatus = useCallback(async () => {
     if (!sessionId && !teamId) return;
 
@@ -62,11 +62,9 @@ export function useSecurityMonitor(
           .eq('id', sessionId)
           .maybeSingle();
 
-        if (sessData) {
-          if (sessData.status === 'terminated') {
-            setIsTerminated(true);
-            return;
-          }
+        if (sessData && sessData.status === 'terminated') {
+          setIsTerminated(true);
+          return;
         }
       }
 
@@ -83,21 +81,20 @@ export function useSecurityMonitor(
         }
       }
 
-      // Check if admin explicitly unlocked this session in disciplinary/audit logs
+      // Check if admin cleared/unlocked this team in disciplinary actions
       const { data: actionData } = await supabase
         .from('disciplinary_actions')
-        .select('id, action, reason')
+        .select('id, action, created_at')
         .eq('team_id', teamId)
+        .eq('action', 'override_unlock')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (actionData && actionData.action === 'override_unlock') {
-        setIsAdminUnlocked(true);
-        setIsLocked(false);
-      }
+      return actionData;
     } catch (err) {
       console.warn('[MYSTERY-Y][SECURITY] Failed to check session status:', err);
+      return null;
     }
   }, [teamId, sessionId]);
 
@@ -106,47 +103,62 @@ export function useSecurityMonitor(
     if (!teamId || !sessionId) return;
 
     try {
-      await checkSessionStatus();
+      const latestUnlockAction = await checkSessionStatus();
 
-      const { data, error } = await supabase
+      const { data: logsData, error } = await supabase
         .from('security_logs')
         .select('id, event_type, created_at, admin_action, is_reviewed')
         .eq('team_id', teamId)
         .order('created_at', { ascending: true });
 
-      if (!error && data) {
-        const count = data.length;
-        setViolations(count);
+      if (!error && logsData) {
+        const rawCount = logsData.length;
+        // Strict cap at 3
+        const cappedCount = Math.min(3, rawCount);
+        setViolations(cappedCount);
 
-        // Check for admin unlock in logs
-        const hasAdminUnlock = data.some((l: any) =>
-          l.admin_action && l.admin_action.toLowerCase().includes('allow continue')
-        );
+        // Check if there is an active unlock
+        let isCurrentlyUnlocked = false;
+        if (latestUnlockAction) {
+          const unlockTime = new Date(latestUnlockAction.created_at).getTime();
+          // Check if any log occurred AFTER this unlock
+          const logsAfterUnlock = logsData.filter(
+            (l: any) => new Date(l.created_at).getTime() > unlockTime
+          );
 
-        if (hasAdminUnlock) {
-          setIsAdminUnlocked(true);
+          if (logsAfterUnlock.length === 0) {
+            isCurrentlyUnlocked = true;
+          }
         }
+
+        setIsAdminUnlocked(isCurrentlyUnlocked);
 
         // Check local storage acknowledged log IDs
         const acknowledgedIds: string[] = JSON.parse(
           localStorage.getItem(`mystery_y_ack_logs_${sessionId}`) || '[]'
         );
 
-        const unacknowledged = data.filter((log: any) => !acknowledgedIds.includes(log.id));
+        const unacknowledged = logsData.filter((log: any) => !acknowledgedIds.includes(log.id));
 
-        if (count >= 3 && !hasAdminUnlock) {
-          setActiveWarning('block');
-          setIsLocked(true);
-          setLastEvent('SECURITY REVIEW REQUIRED (3/3)');
-          isHandlingIncidentRef.current = true;
+        if (rawCount >= 3) {
+          if (isCurrentlyUnlocked) {
+            setIsLocked(false);
+            setActiveWarning(null);
+            isHandlingIncidentRef.current = false;
+          } else {
+            setIsLocked(true);
+            setActiveWarning('block');
+            setLastEvent('MAXIMUM SECURITY ATTEMPTS REACHED (3/3)');
+            isHandlingIncidentRef.current = true;
+          }
         } else if (unacknowledged.length > 0) {
           const latestLog = unacknowledged[unacknowledged.length - 1];
           setLastEvent(mapEventTypeToLabel(latestLog.event_type));
           isHandlingIncidentRef.current = true;
 
-          if (count === 1) {
+          if (cappedCount === 1) {
             setActiveWarning('warn_1');
-          } else if (count === 2) {
+          } else if (cappedCount === 2) {
             setActiveWarning('warn_2');
           }
         } else {
@@ -163,7 +175,7 @@ export function useSecurityMonitor(
     isMountedRef.current = true;
     loadLogs();
 
-    // Listen to real-time updates for security logs and session status
+    // Realtime channel listener for instant synchronization
     const secChannel = supabase
       .channel(`sec-monitor-${sessionId || 'global'}-${Date.now()}`)
       .on('postgres_changes', { event: '*', table: 'security_logs' }, () => {
@@ -173,7 +185,7 @@ export function useSecurityMonitor(
         checkSessionStatus();
       })
       .on('postgres_changes', { event: '*', table: 'disciplinary_actions' }, () => {
-        checkSessionStatus();
+        loadLogs();
       })
       .subscribe();
 
@@ -183,8 +195,8 @@ export function useSecurityMonitor(
     };
   }, [loadLogs, checkSessionStatus, sessionId]);
 
-  // Unified violation logger with strict de-duplication
-  const logViolation = async (
+  // Centralized security incident handler
+  const handleSecurityIncident = async (
     eventType: string,
     severity: 'low' | 'medium' | 'high' = 'medium',
     clientEventId?: string
@@ -192,25 +204,26 @@ export function useSecurityMonitor(
     if (!teamId || !sessionId) return;
     if (isTerminated) return;
 
-    // Strict De-duplication: 1 user action = 1 incident
+    // Strict De-duplication: Ignore events if warning is already up or within cooldown (<800ms)
     const now = Date.now();
     if (isHandlingIncidentRef.current) {
-      console.debug('[MYSTERY-Y][SECURITY] Ignored duplicate event (warning currently active):', eventType);
+      console.debug('[MYSTERY-Y][SECURITY] Ignored duplicate event (modal active):', eventType);
       return;
     }
     if (now - lastIncidentTimestampRef.current < 800) {
-      console.debug('[MYSTERY-Y][SECURITY] Ignored duplicate event within cooldown window (<800ms):', eventType);
+      console.debug('[MYSTERY-Y][SECURITY] Ignored duplicate event within cooldown (<800ms):', eventType);
       return;
     }
 
     lastIncidentTimestampRef.current = now;
     isHandlingIncidentRef.current = true;
 
-    const currentAttempt = violations + 1;
+    // Determine current display attempt capped at 3
+    const nextAttempt = Math.min(3, violations + 1);
 
     const details: SecurityEventDetails = {
       event_type: eventType,
-      attempt_number: currentAttempt,
+      attempt_number: nextAttempt,
       current_route: window.location.pathname,
       timestamp: new Date().toISOString(),
       fullscreen_active: !!document.fullscreenElement,
@@ -228,7 +241,7 @@ export function useSecurityMonitor(
         session_id: sessionId,
         event_type: eventType,
         details,
-        severity: currentAttempt >= 3 ? 'high' : severity,
+        severity: nextAttempt >= 3 ? 'high' : severity,
         is_reviewed: false,
       };
 
@@ -236,87 +249,86 @@ export function useSecurityMonitor(
         insertPayload.client_event_id = eventId;
       }
 
-      console.debug('[MYSTERY-Y][SECURITY] Logging security incident:', eventType, '| Attempt:', currentAttempt);
+      console.debug('[MYSTERY-Y][SECURITY] Authoritative incident logged:', eventType, '| Attempt:', nextAttempt);
 
-      const { data: inserted, error } = await supabase.from('security_logs').insert(insertPayload);
+      await supabase.from('security_logs').insert(insertPayload);
 
-      if (error && !error.message.includes('unique') && !error.message.includes('duplicate')) {
-        console.error('[MYSTERY-Y][SECURITY] Failed to write security log:', error);
-      }
-
-      // Fetch authoritative total violations from DB
+      // Fetch authoritative total logs from DB
       const { data: allLogs } = await supabase
         .from('security_logs')
         .select('id, event_type')
         .eq('team_id', teamId);
 
-      const newTotal = allLogs ? allLogs.length : currentAttempt;
-      setViolations(newTotal);
+      const rawCount = allLogs ? allLogs.length : nextAttempt;
+      const cappedCount = Math.min(3, rawCount);
+      setViolations(cappedCount);
 
       const displayLabel = mapEventTypeToLabel(eventType);
       setLastEvent(displayLabel);
 
-      if (newTotal === 1) {
+      if (cappedCount === 1) {
         setActiveWarning('warn_1');
-      } else if (newTotal === 2) {
+      } else if (cappedCount === 2) {
         setActiveWarning('warn_2');
-      } else if (newTotal >= 3) {
+      } else if (cappedCount >= 3 || rawCount >= 3) {
+        // Strict 3-strike lock
         setActiveWarning('block');
         setIsLocked(true);
+        setIsAdminUnlocked(false);
       }
 
       if (onDisciplinaryAlert) {
-        onDisciplinaryAlert(severity, `SECURITY INCIDENT: ${displayLabel} (${newTotal}/3)`);
+        onDisciplinaryAlert(severity, `SECURITY INCIDENT: ${displayLabel} (${cappedCount}/3)`);
       }
     } catch (err) {
       console.error('[MYSTERY-Y][SECURITY] Error logging security incident:', err);
     }
   };
 
-  // Event Listeners for Tab Switch, Fullscreen Exit, Clipboard
+  // Browser event listeners
   useEffect(() => {
-    if (!teamId || !sessionId) return;
+    if (!teamId || !sessionId || isTerminated) return;
 
-    // 1. Visibility change (Primary tab-switch detector)
+    // 1. Tab Switch (Primary detector)
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        logViolation('tab_switch', 'medium');
+        handleSecurityIncident('tab_switch', 'medium');
       }
     };
 
-    // 2. Window Blur (Secondary focus loss detector, ignored if visibility is already hidden)
+    // 2. Window / Focus Loss (Secondary, ignored if already visibility hidden)
     const handleBlur = () => {
       if (document.visibilityState !== 'hidden') {
-        logViolation('window_blur', 'medium');
+        handleSecurityIncident('window_blur', 'medium');
       }
     };
 
-    // 3. Fullscreen exit detector (Triggers only when exiting fullscreen)
+    // 3. Fullscreen Exit (Authoritative browser fullscreenchange listener)
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
-        logViolation('fullscreen_exit', 'high');
+        handleSecurityIncident('fullscreen_exit', 'high');
       }
     };
 
     // 4. Clipboard tampering
     const handleCopy = (e: ClipboardEvent) => {
       e.preventDefault();
-      logViolation('copy_attempt', 'low');
+      handleSecurityIncident('copy_attempt', 'low');
     };
 
     const handlePaste = (e: ClipboardEvent) => {
       e.preventDefault();
-      logViolation('paste_attempt', 'low');
+      handleSecurityIncident('paste_attempt', 'low');
     };
 
     const handleCut = (e: ClipboardEvent) => {
       e.preventDefault();
-      logViolation('cut_attempt', 'low');
+      handleSecurityIncident('cut_attempt', 'low');
     };
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
-      logViolation('context_menu', 'low');
+      handleSecurityIncident('context_menu', 'low');
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
@@ -363,7 +375,7 @@ export function useSecurityMonitor(
     }
   };
 
-  // Supervisor in-person or admin override unlock
+  // Supervisor in-person PIN clearance override
   const handleAdminOverrideUnlock = async () => {
     setIsLocked(false);
     setActiveWarning(null);
@@ -383,7 +395,7 @@ export function useSecurityMonitor(
         session_id: sessionId,
         action: 'override_unlock',
         reason: 'Supervisor In-Person Clearance Override',
-        created_by: 'b2ece65e-d728-4220-a40f-66f3234caeef', // Admin reference
+        created_by: 'b2ece65e-d728-4220-a40f-66f3234caeef',
       });
     } catch (e) {
       console.warn('Could not record override log:', e);
@@ -399,6 +411,6 @@ export function useSecurityMonitor(
     isAdminUnlocked,
     dismissWarning,
     handleAdminOverrideUnlock,
-    logCustomViolation: logViolation,
+    logCustomViolation: handleSecurityIncident,
   };
 }

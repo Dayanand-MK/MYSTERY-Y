@@ -1842,5 +1842,82 @@ $$;
 GRANT EXECUTE ON FUNCTION public.begin_investigation_transaction(UUID, UUID, UUID)
   TO anon, authenticated;
 
+-- =============================================================================
+-- CLEAR CASE DATA (SUPER ADMIN ONLY)
+-- =============================================================================
+CREATE OR REPLACE FUNCTION public.clear_case_data(p_admin_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_role TEXT;
+BEGIN
+  -- Verify Super Admin
+  SELECT role INTO v_role FROM public.profiles WHERE id = p_admin_id;
+  IF v_role IS DISTINCT FROM 'super_admin' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'UNAUTHORIZED: SUPER ADMIN ONLY');
+  END IF;
 
+  -- Clear case records in order of FK dependencies
+  DELETE FROM public.question_rubrics;
+  DELETE FROM public.question_options;
+  DELETE FROM public.questions;
+  DELETE FROM public.case_access_codes;
+  DELETE FROM public.cases;
 
+  -- Log action
+  INSERT INTO public.admin_actions (admin_id, action_type, details)
+  VALUES (p_admin_id, 'CLEAR_CASE_DATA', jsonb_build_object('timestamp', NOW()));
+
+  RETURN jsonb_build_object('success', true, 'message', 'Case data cleared successfully.');
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.clear_case_data(UUID) TO authenticated;
+
+-- =============================================================================
+-- CLEAR PARTICIPANT DATA (SUPER ADMIN ONLY)
+-- =============================================================================
+CREATE OR REPLACE FUNCTION public.clear_participant_data(p_admin_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_role TEXT;
+BEGIN
+  -- Verify Super Admin
+  SELECT role INTO v_role FROM public.profiles WHERE id = p_admin_id;
+  IF v_role IS DISTINCT FROM 'super_admin' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'UNAUTHORIZED: SUPER ADMIN ONLY');
+  END IF;
+
+  -- Clear participant data in order of FK dependencies
+  DELETE FROM public.result_snapshots;
+  DELETE FROM public.disciplinary_actions;
+  DELETE FROM public.security_logs;
+  DELETE FROM public.draft_answers;
+  DELETE FROM public.answers;
+  DELETE FROM public.submissions;
+  DELETE FROM public.investigation_sessions;
+  DELETE FROM public.team_members;
+  DELETE FROM public.teams;
+
+  -- Reset access codes
+  UPDATE public.case_access_codes
+  SET team_id = NULL, assigned_at = NULL, used_at = NULL, status = 'available';
+
+  -- Log action
+  INSERT INTO public.admin_actions (admin_id, action_type, details)
+  VALUES (p_admin_id, 'CLEAR_PARTICIPANT_DATA', jsonb_build_object('timestamp', NOW()));
+
+  RETURN jsonb_build_object('success', true, 'message', 'Participant investigation data cleared successfully.');
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.clear_participant_data(UUID) TO authenticated;

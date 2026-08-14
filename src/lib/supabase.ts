@@ -223,6 +223,39 @@ class LocalDB {
     this.initializeSeed();
   }
 
+  // Clear only case-related data
+  clearCaseData() {
+    localStorage.removeItem('mystery_y_sim_cases');
+    localStorage.removeItem('mystery_y_sim_case_access_codes');
+    localStorage.removeItem('mystery_y_sim_questions');
+    localStorage.removeItem('mystery_y_sim_question_options');
+    localStorage.removeItem('mystery_y_sim_question_rubrics');
+  }
+
+  // Clear only participant and investigation data
+  clearParticipantData() {
+    localStorage.removeItem('mystery_y_sim_teams');
+    localStorage.removeItem('mystery_y_sim_team_members');
+    localStorage.removeItem('mystery_y_sim_investigation_sessions');
+    localStorage.removeItem('mystery_y_sim_submissions');
+    localStorage.removeItem('mystery_y_sim_answers');
+    localStorage.removeItem('mystery_y_sim_draft_answers');
+    localStorage.removeItem('mystery_y_sim_security_logs');
+    localStorage.removeItem('mystery_y_sim_disciplinary_actions');
+    localStorage.removeItem('mystery_y_sim_result_snapshots');
+
+    // Reset access codes to available
+    const codes = this.query<any>('case_access_codes');
+    const resetCodes = codes.map((c: any) => ({
+      ...c,
+      team_id: null,
+      assigned_at: null,
+      used_at: null,
+      status: 'available'
+    }));
+    this.save('case_access_codes', resetCodes);
+  }
+
   // Query implementation
   query<T>(table: string): T[] {
     return this.getStorage<T[]>(table, []);
@@ -829,6 +862,24 @@ class MockSupabaseClient {
         db.save('events', updatedEvents);
 
         return { data: { success: true, team_count: rankedSnap.length }, error: null };
+      }
+
+      if (functionName === 'clear_case_data') {
+        const currentEmail = localStorage.getItem('mystery_y_mock_email');
+        if (currentEmail !== 'vh13155_ml23@velhightech.com') {
+          return { data: { success: false, error: 'UNAUTHORIZED: SUPER ADMIN PRIVILEGES REQUIRED' }, error: null };
+        }
+        db.clearCaseData();
+        return { data: { success: true, message: 'Case data cleared successfully.' }, error: null };
+      }
+
+      if (functionName === 'clear_participant_data') {
+        const currentEmail = localStorage.getItem('mystery_y_mock_email');
+        if (currentEmail !== 'vh13155_ml23@velhightech.com') {
+          return { data: { success: false, error: 'UNAUTHORIZED: SUPER ADMIN PRIVILEGES REQUIRED' }, error: null };
+        }
+        db.clearParticipantData();
+        return { data: { success: true, message: 'Participant investigation data cleared successfully.' }, error: null };
       }
 
       return { data: null, error: { message: `Function ${functionName} not implemented in simulator.` } };
