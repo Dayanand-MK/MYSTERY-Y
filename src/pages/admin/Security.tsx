@@ -53,16 +53,22 @@ export default function Security() {
     severity: string;
   } | null>(null);
 
+  const teamsRef = React.useRef(teams);
+  useEffect(() => {
+    teamsRef.current = teams;
+  }, [teams]);
+
   useEffect(() => {
     loadData();
 
     // Listen to real-time security events
+    const channelName = `admin-security-incident-center-${Date.now()}`;
     const logChannel = supabase
-      .channel(`admin-security-incident-center-${Date.now()}`)
+      .channel(channelName)
       .on('postgres_changes', { event: 'INSERT', table: 'security_logs' }, (payload: any) => {
         loadData();
         if (payload.new) {
-          const t = teams.find((tm) => tm.id === payload.new.team_id);
+          const t = teamsRef.current.find((tm) => tm.id === payload.new.team_id);
           const attempt = payload.new.details?.attempt_number || 1;
           setLiveToast({
             id: payload.new.id,
@@ -71,7 +77,7 @@ export default function Security() {
             attempt,
             severity: payload.new.severity || 'medium',
           });
-          setTimeout(() => setLiveToast(null), 5000);
+          setTimeout(() => setLiveToast(null), 6000);
         }
       })
       .on('postgres_changes', { event: 'UPDATE', table: 'security_logs' }, () => loadData())
@@ -79,10 +85,16 @@ export default function Security() {
       .on('postgres_changes', { event: '*', table: 'teams' }, () => loadData())
       .subscribe();
 
+    // Periodic fallback polling every 5s
+    const pollInterval = setInterval(() => {
+      loadData();
+    }, 5000);
+
     return () => {
+      clearInterval(pollInterval);
       supabase.removeChannel(logChannel);
     };
-  }, [teams]);
+  }, []);
 
   const loadData = async () => {
     try {

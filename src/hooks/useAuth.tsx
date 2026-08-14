@@ -57,9 +57,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Computed: Is the current admin user the Super Admin?
   const isSuperAdmin =
-    adminUser?.id === SUPER_ADMIN_UUID &&
-    adminUser?.email === SUPER_ADMIN_EMAIL &&
-    adminUser?.role === 'super_admin';
+    adminUser?.role === 'super_admin' ||
+    (adminUser?.email ? adminUser.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() : false) ||
+    adminUser?.id === SUPER_ADMIN_UUID;
 
   // Initialize and check current sessions on load
   useEffect(() => {

@@ -89,16 +89,23 @@ export default function Dashboard() {
 
     loadDashboardData();
 
+    const channelName = `dashboard-sync-${Date.now()}`;
     // Listen to real-time events to refresh stats
     const teamChannel = supabase
-      .channel('dashboard-sync')
+      .channel(channelName)
       .on('postgres_changes', { event: '*', table: 'teams' }, () => loadDashboardData())
       .on('postgres_changes', { event: '*', table: 'security_logs' }, () => loadDashboardData())
       .on('postgres_changes', { event: '*', table: 'submissions' }, () => loadDashboardData())
       .subscribe();
 
+    // Fallback polling interval every 5s
+    const pollInterval = setInterval(() => {
+      loadDashboardData();
+    }, 5000);
+
     return () => {
-      teamChannel.unsubscribe();
+      clearInterval(pollInterval);
+      supabase.removeChannel(teamChannel);
     };
   }, []);
 

@@ -24,7 +24,7 @@ import {
 export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { adminUser, adminLogout, isAdminLoading } = useAuth();
+  const { adminUser, isSuperAdmin, adminLogout, isAdminLoading } = useAuth();
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [alerts, setAlerts] = useState<any[]>([]);
@@ -123,12 +123,14 @@ export default function AdminLayout() {
     { name: 'Scoring', path: '/admin/scoring', icon: CheckSquare, roles: ['super_admin', 'evaluator'] },
     { name: 'Security Center', path: '/admin/security', icon: ShieldAlert, roles: ['super_admin', 'evaluator', 'coordinator'] },
     { name: 'Leaderboard', path: '/admin/leaderboard', icon: BarChart3, roles: ['super_admin', 'evaluator'] },
-    { name: 'Event Controls', path: '/admin/settings', icon: Sliders, roles: ['super_admin'] },
+    { name: 'Event & Database Controls', path: '/admin/settings', icon: Sliders, roles: ['super_admin'] },
     { name: 'Test Panel', path: '/admin/test-mode', icon: PlayCircle, roles: ['super_admin'] },
     { name: 'Admin Management', path: '/admin/admin-management', icon: UserCog, roles: ['super_admin'] },
   ];
 
-  const allowedNavs = navigationItems.filter((item) => item.roles.includes(adminUser.role));
+  const allowedNavs = navigationItems.filter(
+    (item) => item.roles.includes(adminUser.role) || (isSuperAdmin && item.roles.includes('super_admin'))
+  );
 
   return (
     <div className="h-screen flex bg-detective-dark text-detective-text overflow-hidden font-mono">
