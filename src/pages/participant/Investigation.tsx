@@ -287,7 +287,10 @@ export default function Investigation() {
   } = useSecurityMonitor(
     phase === 'ready' || phase === 'locked' ? currentTeam?.id : undefined,
     phase === 'ready' || phase === 'locked' ? currentSession?.id : undefined,
-    phase === 'ready' && isFullscreen
+    // Security listeners must stay active for an active investigation even if
+    // the browser declines a delayed fullscreen request. The monitor itself
+    // only treats an exit as a violation after fullscreen was actually entered.
+    phase === 'ready'
   );
 
   // Handle return to fullscreen from warning overlay
