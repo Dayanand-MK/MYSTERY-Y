@@ -556,20 +556,27 @@ class MockSupabaseClient {
           };
         }
 
+        // Accept 'assigned' OR 'available' codes (registration sets to 'assigned')
         const codes = db.query<any>('case_access_codes');
-        const codeRec = codes.find((c: any) => c.id === p_code_id && c.team_id === p_team_id);
-        if (!codeRec || codeRec.status !== 'assigned') {
+        const codeRec = p_code_id
+          ? codes.find((c: any) => c.id === p_code_id && c.team_id === p_team_id)
+          : null;
+
+        // If a code id was provided but not found / wrong status, reject
+        if (p_code_id && codeRec && codeRec.status !== 'assigned' && codeRec.status !== 'available') {
           return { data: { success: false, error: 'INVALID OR LOCK-FAILED ACCESS CODE' }, error: null };
         }
 
-        // Lock access code
-        const updatedCodes = codes.map((c: any) => {
-          if (c.id === p_code_id) return { ...c, status: 'used', used_at: new Date().toISOString() };
-          return c;
-        });
-        db.save('case_access_codes', updatedCodes);
+        // Lock access code to 'used' (best-effort, only if we found it)
+        if (codeRec) {
+          const updatedCodes = codes.map((c: any) => {
+            if (c.id === p_code_id) return { ...c, status: 'used', used_at: new Date().toISOString() };
+            return c;
+          });
+          db.save('case_access_codes', updatedCodes);
+        }
 
-        // Update team
+        // Update team status to active
         const teams = db.query<any>('teams');
         const updatedTeams = teams.map((t: any) => {
           if (t.id === p_team_id) return { ...t, status: 'active' };
@@ -577,20 +584,41 @@ class MockSupabaseClient {
         });
         db.save('teams', updatedTeams);
 
-        // Session
+        // Create investigation session
         const newSessionId = crypto.randomUUID();
         const startTimestamp = new Date().toISOString();
         const newSession = {
           id: newSessionId,
           team_id: p_team_id,
           case_id: p_case_id,
-          access_code_id: p_code_id,
+          access_code_id: p_code_id || null,
           started_at: startTimestamp,
           last_seen_at: startTimestamp,
           status: 'active',
           created_at: startTimestamp
         };
         db.save('investigation_sessions', [...sessions, newSession]);
+
+        // Create submission row so useParticipantSession can find it via DB query
+        const submissions = db.query<any>('submissions');
+        const existingSub = submissions.find((s: any) => s.team_id === p_team_id && s.case_id === p_case_id);
+        if (!existingSub) {
+          const subCount = submissions.length;
+          const newSub = {
+            id: crypto.randomUUID(),
+            submission_id_label: `SUB-${100001 + subCount}`,
+            team_id: p_team_id,
+            case_id: p_case_id,
+            session_id: newSessionId,
+            started_at: startTimestamp,
+            submitted_at: null,
+            duration: null,
+            score: null,
+            is_finalized: false,
+            created_at: startTimestamp,
+          };
+          db.save('submissions', [...submissions, newSub]);
+        }
 
         return {
           data: {
