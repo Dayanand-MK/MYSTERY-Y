@@ -65,7 +65,7 @@ export default function Security() {
     const channelName = `admin-security-incident-center-${Date.now()}`;
     const logChannel = supabase
       .channel(channelName)
-      .on('postgres_changes', { event: 'INSERT', table: 'security_logs' }, (payload: any) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'security_logs' }, (payload: any) => {
         loadData();
         if (payload.new) {
           const t = teamsRef.current.find((tm) => tm.id === payload.new.team_id);
@@ -80,9 +80,9 @@ export default function Security() {
           setTimeout(() => setLiveToast(null), 6000);
         }
       })
-      .on('postgres_changes', { event: 'UPDATE', table: 'security_logs' }, () => loadData())
-      .on('postgres_changes', { event: '*', table: 'investigation_sessions' }, () => loadData())
-      .on('postgres_changes', { event: '*', table: 'teams' }, () => loadData())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'security_logs' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investigation_sessions' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, () => loadData())
       .subscribe();
 
     // Periodic fallback polling every 5s

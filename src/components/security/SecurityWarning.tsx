@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { ShieldAlert, Lock, AlertTriangle, Key, Maximize2, RefreshCw } from 'lucide-react';
+import { ShieldAlert, Lock, AlertTriangle, Maximize2, RefreshCw } from 'lucide-react';
 
 export interface SecurityWarningProps {
   type: 'warn_1' | 'warn_2' | 'block';
   violations: number;
   onDismiss: () => void;
-  onAdminUnlock?: () => void;
   onReturnFullscreen?: () => Promise<void> | void;
   eventType?: string;
 }
@@ -14,32 +13,14 @@ export default function SecurityWarning({
   type,
   violations,
   onDismiss,
-  onAdminUnlock,
   onReturnFullscreen,
   eventType = 'TAB SWITCH DETECTED'
 }: SecurityWarningProps) {
-  const [adminPin, setAdminPin] = useState('');
-  const [pinError, setPinError] = useState(false);
   const [fullscreenFailed, setFullscreenFailed] = useState(false);
   const [isRestoringFs, setIsRestoringFs] = useState(false);
 
   const isFullscreenExit = eventType.toUpperCase().includes('FULLSCREEN');
   const cappedAttempts = Math.min(3, Math.max(1, violations));
-
-  const handleUnlockAttempt = (e: React.FormEvent) => {
-    e.preventDefault();
-    const validPins = ['admin123', 'Daya@2006', 'ADMIN', 'UNLOCK', 'ZEPHORIA2026'];
-    if (validPins.includes(adminPin.trim())) {
-      setPinError(false);
-      if (onAdminUnlock) {
-        onAdminUnlock();
-      } else {
-        onDismiss();
-      }
-    } else {
-      setPinError(true);
-    }
-  };
 
   const handleAction = async () => {
     if (isFullscreenExit && onReturnFullscreen) {
@@ -167,33 +148,6 @@ export default function SecurityWarning({
               [ SESSION LOCKED ]
             </div>
 
-            <form onSubmit={handleUnlockAttempt} className="space-y-3 pt-3 border-t border-detective-border/40">
-              <label className="block text-[10px] uppercase text-detective-muted font-bold flex items-center justify-center gap-1">
-                <Key className="w-3.5 h-3.5 text-detective-amber" /> In-Person Supervisor Override PIN
-              </label>
-
-              {pinError && (
-                <div className="text-[10px] text-red-400 font-bold uppercase">
-                  Invalid Supervisor PIN. Try again.
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={adminPin}
-                  onChange={(e) => setAdminPin(e.target.value)}
-                  placeholder="Supervisor PIN..."
-                  className="w-full bg-black/60 border border-detective-border rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-detective-crimson"
-                />
-                <button
-                  type="submit"
-                  className="bg-detective-crimson hover:bg-detective-alert text-white px-4 py-2 rounded text-xs font-bold uppercase tracking-wider flex-shrink-0 border border-detective-crimson/50 cursor-pointer"
-                >
-                  Override
-                </button>
-              </div>
-            </form>
           </div>
         )}
 

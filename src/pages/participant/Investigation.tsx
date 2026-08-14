@@ -279,11 +279,11 @@ export default function Investigation() {
     lastEvent,
     isLocked,
     isTerminated,
-    dismissWarning,
-    handleAdminOverrideUnlock
+    dismissWarning
   } = useSecurityMonitor(
     phase === 'ready' || phase === 'locked' ? currentTeam?.id : undefined,
-    phase === 'ready' || phase === 'locked' ? currentSession?.id : undefined
+    phase === 'ready' || phase === 'locked' ? currentSession?.id : undefined,
+    phase === 'ready' && isFullscreen
   );
 
   // Handle return to fullscreen from warning overlay
@@ -382,7 +382,6 @@ export default function Investigation() {
           violations={violations}
           onDismiss={dismissWarning}
           onReturnFullscreen={handleReturnFullscreen}
-          onAdminUnlock={handleAdminOverrideUnlock}
           eventType={lastEvent}
         />
       )}

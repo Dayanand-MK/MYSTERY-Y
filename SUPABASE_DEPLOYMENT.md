@@ -137,3 +137,6 @@ Enable Realtime for live monitoring on the admin dashboard:
 - [ ] 3rd violation locks session and displays warning overlay.
 - [ ] Final submission calculates server-side duration and locks answers.
 - [ ] Correct answers/scores are NEVER visible in Network tab/participant UI.
+# Security-monitoring migration
+
+Before deploying this release, run [20260814_security_monitoring.sql](supabase/migrations/20260814_security_monitoring.sql) in the project's Supabase SQL Editor. It installs the atomic `record_security_violation` RPC, locks a session on its third incident, and adds `security_logs` to Realtime. Do not use the old direct client `security_logs` insert path.

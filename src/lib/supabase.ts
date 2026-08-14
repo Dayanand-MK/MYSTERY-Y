@@ -673,6 +673,30 @@ class MockSupabaseClient {
         };
       }
 
+      if (functionName === 'record_security_violation') {
+        const { p_team_id, p_session_id, p_event_type, p_client_event_id, p_details } = args;
+        const sessions = db.query<any>('investigation_sessions');
+        const sessionIndex = sessions.findIndex((s: any) => s.id === p_session_id && s.team_id === p_team_id);
+        if (sessionIndex < 0 || sessions[sessionIndex].status !== 'active') {
+          return { data: { success: false, error: 'ACTIVE PARTICIPANT SESSION NOT FOUND' }, error: null };
+        }
+        const logs = db.query<any>('security_logs');
+        const duplicate = logs.find((log: any) => log.client_event_id === p_client_event_id);
+        if (duplicate) return { data: duplicate.details?.rpc_result || { success: true }, error: null };
+        const attempt = logs.filter((log: any) => log.session_id === p_session_id).length + 1;
+        const locked = attempt >= 3;
+        const result = { success: true, violation_id: crypto.randomUUID(), attempt_number: attempt, max_attempts: 3, locked, event_type: p_event_type };
+        const log = {
+          id: result.violation_id, client_event_id: p_client_event_id, team_id: p_team_id, session_id: p_session_id,
+          event_type: p_event_type, details: { ...p_details, attempt_number: attempt, max_attempts: 3, rpc_result: result },
+          severity: locked ? 'high' : 'medium', is_reviewed: false, created_at: new Date().toISOString(),
+        };
+        db.save('security_logs', [...logs, log]);
+        if (locked) { sessions[sessionIndex] = { ...sessions[sessionIndex], status: 'flagged' }; db.save('investigation_sessions', sessions); }
+        (realtimeCallbacks.get('security_logs') || []).forEach((callback) => callback({ eventType: 'INSERT', new: log }));
+        return { data: result, error: null };
+      }
+
       if (functionName === 'submit_investigation_transaction') {
         const { p_session_id, p_client_answers } = args;
         const sessions = db.query<any>('investigation_sessions');
