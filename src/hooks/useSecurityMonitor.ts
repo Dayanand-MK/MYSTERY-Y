@@ -37,7 +37,9 @@ export function useSecurityMonitor(teamId: string | null | undefined, sessionId:
       setActiveWarning(null);
       setSessionRestored(false);
     }
-    if (fullscreenMonitoringActive) fullscreenWasActiveRef.current = true;
+    // Do not assume fullscreen is active just because monitoring is active.
+    // Only a real browser fullscreen state can arm an exit violation.
+    if (fullscreenMonitoringActive && document.fullscreenElement) fullscreenWasActiveRef.current = true;
   }, [teamId, sessionId, fullscreenMonitoringActive]);
 
   const applyResult = useCallback((result: any) => {
@@ -109,9 +111,18 @@ export function useSecurityMonitor(teamId: string | null | undefined, sessionId:
       if (document.visibilityState === 'visible') { console.debug('[SECURITY DEBUG] Blur detected'); console.debug('[SECURITY DEBUG] Candidate event: WINDOW_BLUR'); void recordSecurityViolation('WINDOW_BLUR'); }
     }, 80);
     const onFullscreenChange = () => {
+      const fullscreenActive = Boolean(document.fullscreenElement);
+      const wasFullscreen = fullscreenWasActiveRef.current;
       console.debug('[SECURITY DEBUG] Fullscreen change detected');
-      console.debug('[SECURITY DEBUG] Fullscreen state:', Boolean(document.fullscreenElement));
-      if (!document.fullscreenElement && fullscreenWasActiveRef.current) { console.debug('[SECURITY DEBUG] Candidate event: FULLSCREEN_EXIT'); void recordSecurityViolation('FULLSCREEN_EXIT'); }
+      console.debug('[SECURITY DEBUG] Fullscreen state:', fullscreenActive);
+      if (fullscreenActive) {
+        fullscreenWasActiveRef.current = true;
+        return;
+      }
+      // Clear before the async RPC starts so duplicate fullscreenchange events
+      // for the same exit cannot create another log or warning.
+      fullscreenWasActiveRef.current = false;
+      if (wasFullscreen) { console.debug('[SECURITY DEBUG] Candidate event: FULLSCREEN_EXIT'); void recordSecurityViolation('FULLSCREEN_EXIT'); }
     };
     const onCopy = (event: ClipboardEvent) => { event.preventDefault(); void recordSecurityViolation('COPY_ATTEMPT'); };
     const onPaste = (event: ClipboardEvent) => { event.preventDefault(); void recordSecurityViolation('PASTE_ATTEMPT'); };
