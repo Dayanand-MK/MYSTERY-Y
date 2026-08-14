@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS public.draft_answers (
 -- Security Logs
 CREATE TABLE IF NOT EXISTS public.security_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_event_id UUID UNIQUE,
     team_id UUID REFERENCES public.teams(id) ON DELETE CASCADE,
     session_id UUID REFERENCES public.investigation_sessions(id) ON DELETE CASCADE,
     event_type TEXT NOT NULL,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
+import { useParticipantSession } from '../../hooks/useParticipantSession';
 import { useAutoSave } from '../../hooks/useAutoSave';
 import { useInvestigationTimer } from '../../hooks/useInvestigationTimer';
 import { useSecurityMonitor } from '../../hooks/useSecurityMonitor';
@@ -8,53 +8,95 @@ import { supabase } from '../../lib/supabase';
 import QuestionSheet from '../../components/questions/QuestionSheet';
 import SecurityWarning from '../../components/security/SecurityWarning';
 import CaseBriefing from '../../components/evidence/CaseBriefing';
-import { Clock, ShieldAlert, CheckCircle, Database, BookOpen, Send, AlertTriangle, User } from 'lucide-react';
+import {
+  Clock,
+  ShieldAlert,
+  CheckCircle,
+  Database,
+  BookOpen,
+  Send,
+  AlertTriangle,
+  User,
+  Maximize,
+  Minimize
+} from 'lucide-react';
 
 export default function Investigation() {
   const navigate = useNavigate();
-  const { currentTeam, currentSession } = useAuth();
+  const { team, session, caseInfo, loading: sessionLoading, error: sessionError } = useParticipantSession();
 
   const [questions, setQuestions] = useState<any[]>([]);
   const [options, setOptions] = useState<any[]>([]);
-  const [caseInfo, setCaseInfo] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'brief' | 'questions'>('brief');
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isDataLoading, setIsDataLoading] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenSupported, setFullscreenSupported] = useState(true);
 
-  // Redirect to register/verify if auth data is missing
+  // Monitor browser fullscreen state
   useEffect(() => {
-    if (!currentTeam) {
-      navigate('/register');
-    } else if (!currentSession) {
-      navigate('/verify-case');
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    const handleFullscreenError = () => {
+      console.warn('Fullscreen mode encountered an error or is unsupported.');
+      setFullscreenSupported(false);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('fullscreenerror', handleFullscreenError);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('fullscreenerror', handleFullscreenError);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle prevented or unsupported:', err);
     }
-  }, [currentTeam, currentSession, navigate]);
+  };
 
-  // Load questions, options, and case details
+  // Redirect if no active session or team after session restoration finishes
   useEffect(() => {
-    if (!currentTeam) return;
+    if (!sessionLoading) {
+      if (!team) {
+        navigate('/register');
+      } else if (!session) {
+        navigate('/verify-case');
+      }
+    }
+  }, [sessionLoading, team, session, navigate]);
+
+  // Load case questions & options once team & case are known
+  useEffect(() => {
+    if (!team || !team.case_id) return;
 
     async function loadInvestigationData() {
+      setIsDataLoading(true);
       try {
-        // 1. Fetch Case Details (fetches briefing columns too via *)
-        const { data: cData } = await supabase
-          .from('cases')
-          .select('*')
-          .eq('id', currentTeam!.case_id)
-          .single();
-
-        if (cData) setCaseInfo(cData);
-
-        // 2. Fetch Questions
+        // Fetch Questions
         const { data: qData } = await supabase
           .from('questions')
           .select('*')
-          .eq('case_id', currentTeam!.case_id)
+          .eq('case_id', team!.case_id)
           .order('sort_order', { ascending: true });
 
         if (qData) setQuestions(qData);
 
-        // 3. Fetch Options
+        // Fetch Options
         const { data: oData } = await supabase
           .from('question_options')
           .select('id, question_id, option_text, sort_order');
@@ -63,35 +105,38 @@ export default function Investigation() {
       } catch (err) {
         console.error('Failed to load investigation data', err);
       } finally {
-        setIsLoading(false);
+        setIsDataLoading(false);
       }
     }
 
     loadInvestigationData();
-  }, [currentTeam]);
+  }, [team]);
 
-  // Autosave answers engine hook
-  const { drafts, updateAnswer, syncStatus, syncError } = useAutoSave(
-    currentTeam?.id
-  );
+  // Database-first Autosave answers engine
+  const { drafts, updateAnswer, syncStatus, syncError } = useAutoSave(team?.id);
 
-  // Sync Count-up timer hook
+  // Authoritative Count-up timer hook from session.started_at
   const { formattedTime } = useInvestigationTimer(
-    currentSession?.started_at,
+    session?.started_at,
     caseInfo?.duration_limit || 60
   );
 
   // Active Security monitoring hook
   const { violations, activeWarning, lastEvent, dismissWarning } = useSecurityMonitor(
-    currentTeam?.id,
-    currentSession?.id
+    team?.id,
+    session?.id
   );
 
-  if (isLoading || !currentTeam || !currentSession || !caseInfo) {
+  if (sessionLoading || isDataLoading || !team || !session || !caseInfo) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-detective-dark font-mono text-sm text-detective-muted">
-        <Clock className="w-8 h-8 animate-spin text-detective-crimson mb-2" />
-        LOADING SECURE DOSSIER AND BRIEFING DECODER...
+        <Clock className="w-8 h-8 animate-spin text-detective-crimson mb-3" />
+        <div className="text-white font-bold tracking-widest text-base mb-1">
+          [ RESTORING INVESTIGATION SESSION... ]
+        </div>
+        <div className="text-xs text-detective-muted uppercase">
+          Verifying security clearance and dossier state
+        </div>
       </div>
     );
   }
@@ -120,9 +165,9 @@ export default function Investigation() {
       )}
 
       {/* Top command bar */}
-      <header className="h-14 bg-detective-panel border-b border-detective-border px-6 flex items-center justify-between z-30">
+      <header className="h-14 bg-detective-panel border-b border-detective-border px-6 flex items-center justify-between z-30 flex-shrink-0">
         <div className="flex items-center gap-4">
-          <span className="font-bold text-detective-crimson uppercase tracking-wider text-sm select-none">
+          <span className="font-bold text-detective-crimson uppercase tracking-wider text-sm select-none flex items-center gap-2">
             🔎 MYSTERY Y Workstation
           </span>
           <div className="hidden sm:flex items-center gap-2 text-xs bg-black/30 border border-detective-border rounded px-2.5 py-1">
@@ -131,8 +176,32 @@ export default function Investigation() {
           </div>
         </div>
 
-        {/* Sync status and Timer */}
-        <div className="flex items-center gap-6">
+        {/* Sync status, Fullscreen toggle and Timer */}
+        <div className="flex items-center gap-4 sm:gap-6">
+          {/* Fullscreen Toggle */}
+          {fullscreenSupported ? (
+            <button
+              onClick={toggleFullscreen}
+              className="flex items-center gap-1.5 text-xs bg-black/40 hover:bg-black/60 border border-detective-border px-2.5 py-1 rounded text-stone-300 hover:text-white transition-colors uppercase font-bold"
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize className="w-3.5 h-3.5 text-detective-amber" />
+                  <span className="hidden md:inline">[ EXIT FULLSCREEN ]</span>
+                </>
+              ) : (
+                <>
+                  <Maximize className="w-3.5 h-3.5 text-detective-green" />
+                  <span className="hidden md:inline">[ ENTER FULLSCREEN ]</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <span className="text-[10px] text-detective-muted uppercase hidden md:inline">
+              FULLSCREEN NOT AVAILABLE
+            </span>
+          )}
+
           {/* Sync indicator */}
           <div className="flex items-center gap-1.5 text-xs">
             {syncStatus === 'saving' && (
@@ -147,7 +216,7 @@ export default function Investigation() {
             )}
             {syncStatus === 'error' && (
               <span className="text-detective-alert flex items-center gap-1 font-bold animate-pulse">
-                <ShieldAlert className="w-3.5 h-3.5" /> {syncError}
+                <ShieldAlert className="w-3.5 h-3.5" /> {syncError || 'Save Retry'}
               </span>
             )}
           </div>
@@ -166,7 +235,7 @@ export default function Investigation() {
         {/* Left Side: Navigation pane */}
         <div className="w-full md:w-64 bg-detective-panel border-r border-detective-border flex flex-col flex-shrink-0">
           
-          {/* Tab selector (Updated to 2-columns layout) */}
+          {/* Tab selector */}
           <div className="p-3 border-b border-detective-border grid grid-cols-2 gap-1 bg-black/10">
             <button
               onClick={() => setActiveTab('brief')}
@@ -249,8 +318,8 @@ export default function Investigation() {
               <User className="w-3.5 h-3.5" />
               <span>ACTIVE INVESTIGATOR:</span>
             </div>
-            <div className="font-bold text-white uppercase truncate">{currentTeam.name}</div>
-            <div className="text-[10px] text-detective-crimson font-mono font-bold tracking-widest">{currentTeam.team_id_label}</div>
+            <div className="font-bold text-white uppercase truncate">{team.name}</div>
+            <div className="text-[10px] text-detective-crimson font-mono font-bold tracking-widest">{team.team_id_label}</div>
           </div>
         </div>
 
@@ -262,7 +331,7 @@ export default function Investigation() {
             <div className="flex-grow p-6 overflow-y-auto flex items-center justify-center bg-detective-dark/20">
               <CaseBriefing
                 caseInfo={caseInfo}
-                teamName={currentTeam.name}
+                teamName={team.name}
                 isBeforeStart={false}
               />
             </div>
@@ -274,7 +343,11 @@ export default function Investigation() {
                 questions={questions}
                 options={options}
                 answers={drafts}
-                onAnswerChange={updateAnswer}
+                onAnswerChange={(qId, text, selected) => {
+                  const q = questions.find((item) => item.id === qId);
+                  const isChoice = q && ['single_choice', 'multiple_choice', 'evidence_selection'].includes(q.type);
+                  updateAnswer(qId, text, selected, !!isChoice);
+                }}
                 activeQuestionIndex={activeQuestionIdx}
               />
               
@@ -282,7 +355,7 @@ export default function Investigation() {
               <div className="absolute bottom-0 left-0 w-full h-14 bg-white border-t border-black/10 px-8 flex justify-between items-center z-10">
                 <button
                   disabled={activeQuestionIdx === 0}
-                  onClick={() => setActiveQuestionIdx(prev => prev - 1)}
+                  onClick={() => setActiveQuestionIdx((prev) => prev - 1)}
                   className="px-4 py-1.5 rounded border border-black/20 text-xs font-bold text-black/60 hover:bg-black/5 disabled:opacity-30"
                 >
                   PREV INQUIRY
@@ -294,7 +367,7 @@ export default function Investigation() {
 
                 {activeQuestionIdx < questions.length - 1 ? (
                   <button
-                    onClick={() => setActiveQuestionIdx(prev => prev + 1)}
+                    onClick={() => setActiveQuestionIdx((prev) => prev + 1)}
                     className="px-4 py-1.5 rounded bg-detective-dark hover:bg-detective-crimson text-white text-xs font-bold transition-colors"
                   >
                     NEXT INQUIRY

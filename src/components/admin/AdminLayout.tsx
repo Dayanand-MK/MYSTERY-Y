@@ -17,19 +17,21 @@ import {
   Menu,
   X,
   Bell,
-  UserCog
+  UserCog,
+  Radio
 } from 'lucide-react';
 
 export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { adminUser, adminLogout, isAdminLoading } = useAuth();
-  
+
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState<'live' | 'reconnecting'>('live');
 
-  // Redirect if not logged in
+  // Redirect if not logged in after auth loading finishes
   useEffect(() => {
     if (!isAdminLoading && !adminUser) {
       navigate('/admin/login');
@@ -40,36 +42,56 @@ export default function AdminLayout() {
   useEffect(() => {
     if (!adminUser) return;
 
-    // Subscribe to new security logs
+    const channelName = `admin-security-alerts-${Date.now()}`;
     const channel = supabase
-      .channel('admin-security-alerts')
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: 'INSERT', table: 'security_logs' },
-        (payload: any) => {
-          // Fetch team label to make it readable
-          supabase
-            .from('teams')
-            .select('team_id_label, name')
-            .eq('id', payload.new.team_id)
-            .single()
-            .then(({ data }) => {
-              const alertMsg = {
-                id: payload.new.id,
-                event_type: payload.new.event_type,
-                severity: payload.new.severity,
-                created_at: payload.new.created_at,
-                team_label: data?.team_id_label || 'SYSTEM',
-                team_name: data?.name || 'SYSTEM'
-              };
-              setAlerts((prev) => [alertMsg, ...prev.slice(0, 19)]);
-            });
+        async (payload: any) => {
+          setRealtimeStatus('live');
+          try {
+            let teamLabel = 'SYSTEM';
+            let teamName = 'SYSTEM';
+
+            if (payload.new.team_id) {
+              const { data } = await supabase
+                .from('teams')
+                .select('team_id_label, name')
+                .eq('id', payload.new.team_id)
+                .maybeSingle();
+
+              if (data) {
+                teamLabel = data.team_id_label || 'SYSTEM';
+                teamName = data.name || 'SYSTEM';
+              }
+            }
+
+            const alertMsg = {
+              id: payload.new.id,
+              event_type: payload.new.event_type,
+              severity: payload.new.severity,
+              created_at: payload.new.created_at,
+              team_label: teamLabel,
+              team_name: teamName,
+            };
+
+            setAlerts((prev) => [alertMsg, ...prev.slice(0, 19)]);
+          } catch (err) {
+            console.error('Error parsing realtime alert', err);
+          }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('live');
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setRealtimeStatus('reconnecting');
+        }
+      });
 
     return () => {
-      channel.unsubscribe();
+      supabase.removeChannel(channel);
     };
   }, [adminUser]);
 
@@ -81,8 +103,13 @@ export default function AdminLayout() {
   if (isAdminLoading || !adminUser) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-detective-dark font-mono text-sm text-detective-muted">
-        <Terminal className="w-8 h-8 animate-spin text-detective-crimson mb-2" />
-        ESTABLISHING SECURE ADMIN LINK...
+        <Terminal className="w-8 h-8 animate-spin text-detective-crimson mb-3" />
+        <div className="text-white font-bold tracking-widest text-base mb-1">
+          [ RESTORING COMMAND CENTER... ]
+        </div>
+        <div className="text-xs text-detective-muted uppercase">
+          Verifying security credentials and authority level
+        </div>
       </div>
     );
   }
@@ -98,10 +125,10 @@ export default function AdminLayout() {
     { name: 'Leaderboard', path: '/admin/leaderboard', icon: BarChart3, roles: ['super_admin', 'evaluator'] },
     { name: 'Event Controls', path: '/admin/settings', icon: Sliders, roles: ['super_admin'] },
     { name: 'Test Panel', path: '/admin/test-mode', icon: PlayCircle, roles: ['super_admin'] },
-    { name: 'Admin Management', path: '/admin/admin-management', icon: UserCog, roles: ['super_admin'] }
+    { name: 'Admin Management', path: '/admin/admin-management', icon: UserCog, roles: ['super_admin'] },
   ];
 
-  const allowedNavs = navigationItems.filter(item => item.roles.includes(adminUser.role));
+  const allowedNavs = navigationItems.filter((item) => item.roles.includes(adminUser.role));
 
   return (
     <div className="h-screen flex bg-detective-dark text-detective-text overflow-hidden font-mono">
@@ -169,9 +196,14 @@ export default function AdminLayout() {
             >
               {isMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
-            <span className="font-bold text-xs uppercase text-detective-muted tracking-widest hidden sm:inline-block">
-              SYSTEM REPORT: <span className="text-detective-green">OPERATIONAL</span>
-            </span>
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest">
+              <Radio className={`w-3.5 h-3.5 ${realtimeStatus === 'live' ? 'text-detective-green animate-pulse' : 'text-detective-amber animate-spin'}`} />
+              {realtimeStatus === 'live' ? (
+                <span className="text-detective-green">[ LIVE REALTIME ]</span>
+              ) : (
+                <span className="text-detective-amber">[ REALTIME RECONNECTING... ]</span>
+              )}
+            </div>
           </div>
 
           {/* Alerts Bell notification */}
@@ -190,7 +222,7 @@ export default function AdminLayout() {
               )}
             </button>
 
-            {/* Notification dropdown dropdown */}
+            {/* Notification dropdown */}
             {showNotificationCenter && (
               <div className="absolute right-0 mt-3 w-80 bg-detective-panel border border-detective-border rounded shadow-2xl z-50 p-4 font-mono text-xs max-h-96 overflow-y-auto">
                 <div className="flex justify-between items-center border-b border-detective-border pb-2 mb-3">
@@ -212,14 +244,20 @@ export default function AdminLayout() {
                       <div
                         key={alert.id}
                         className={`p-2.5 rounded border border-detective-border bg-black/30 flex flex-col gap-1 ${
-                          alert.severity === 'high' ? 'border-l-4 border-l-detective-crimson' : 'border-l-4 border-l-detective-amber'
+                          alert.severity === 'high'
+                            ? 'border-l-4 border-l-detective-crimson'
+                            : 'border-l-4 border-l-detective-amber'
                         }`}
                       >
                         <div className="flex justify-between text-[9px] font-bold">
                           <span className="text-detective-crimson uppercase">{alert.event_type}</span>
-                          <span className="text-detective-muted">{new Date(alert.created_at).toLocaleTimeString()}</span>
+                          <span className="text-detective-muted">
+                            {new Date(alert.created_at).toLocaleTimeString()}
+                          </span>
                         </div>
-                        <div className="text-white text-[10px] uppercase font-bold">{alert.team_label} - {alert.team_name}</div>
+                        <div className="text-white text-[10px] uppercase font-bold">
+                          {alert.team_label} - {alert.team_name}
+                        </div>
                       </div>
                     ))}
                   </div>

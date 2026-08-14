@@ -2,9 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 
 export function useInvestigationTimer(startedAt: string | null | undefined, durationLimitMinutes: number = 60) {
   const [seconds, setSeconds] = useState(0);
-  // serverClockOffsetMs: difference between server time and local time (ms)
-  // We use the session's started_at as the reference point. The offset correction
-  // accounts for situations where the participant's local clock is ahead/behind.
   const offsetRef = useRef<number>(0);
 
   useEffect(() => {
@@ -14,17 +11,10 @@ export function useInvestigationTimer(startedAt: string | null | undefined, dura
     }
 
     const startMs = new Date(startedAt).getTime();
-
-    // Calculate elapsed time using the server-authoritative start timestamp
-    // The offset is implicitly handled by the fact that started_at comes from the server.
-    // We don't trust Date.now() for the absolute time, but we trust it for
-    // measuring ELAPSED duration since the component mounted.
-    const mountLocalMs = Date.now();
-    // We know started_at is the server's time. Elapsed at mount = local_now - server_start.
-    // This is accurate as long as the server and local clocks are reasonably close.
-    // We store the offset for periodic recalculation.
-    const initialElapsed = Math.max(0, Math.floor((mountLocalMs - startMs) / 1000));
-    setSeconds(initialElapsed);
+    if (isNaN(startMs)) {
+      setSeconds(0);
+      return;
+    }
 
     const calculateElapsed = () => {
       const nowMs = Date.now();
@@ -32,6 +22,7 @@ export function useInvestigationTimer(startedAt: string | null | undefined, dura
       setSeconds(elapsedSec);
     };
 
+    calculateElapsed();
     const interval = setInterval(calculateElapsed, 1000);
 
     return () => clearInterval(interval);

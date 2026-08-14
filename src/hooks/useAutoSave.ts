@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 export interface AnswerDraft {
@@ -17,49 +17,68 @@ export function useAutoSave(
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingUpdatesRef = useRef<AnswerDraft[]>([]);
+  const isLoadedRef = useRef<boolean>(false);
 
-  // Load draft answers from DB or local storage on start
-  useEffect(() => {
+  // Load authoritative draft answers from DB FIRST on mount
+  const fetchAuthoritativeDrafts = useCallback(async () => {
     if (!teamId) return;
 
-    const savedLocal = localStorage.getItem(`mystery_y_drafts_${teamId}`);
-    if (savedLocal) {
-      setDrafts(JSON.parse(savedLocal));
-      return;
-    }
+    try {
+      // 1. Query Supabase for authoritative draft answers
+      const { data, error } = await supabase
+        .from('draft_answers')
+        .select('question_id, answer_text, selected_options')
+        .eq('team_id', teamId);
 
-    async function fetchServerDrafts() {
-      try {
-        const { data, error } = await supabase
-          .from('draft_answers')
-          .select('question_id, answer_text, selected_options')
-          .eq('team_id', teamId);
-
-        if (!error && data && data.length > 0) {
-          const loadedDrafts = data.map((d: any) => ({
-            question_id: d.question_id,
-            answer_text: d.answer_text || '',
-            selected_options: d.selected_options || []
-          }));
-          setDrafts(loadedDrafts);
-          localStorage.setItem(`mystery_y_drafts_${teamId}`, JSON.stringify(loadedDrafts));
-        }
-      } catch (err) {
-        console.error('Failed to sync drafts from database', err);
+      let serverDrafts: AnswerDraft[] = [];
+      if (!error && data && data.length > 0) {
+        serverDrafts = data.map((d: any) => ({
+          question_id: d.question_id,
+          answer_text: d.answer_text || '',
+          selected_options: d.selected_options || [],
+        }));
       }
-    }
 
-    fetchServerDrafts();
+      // 2. Check local storage cache as backup merge
+      const savedLocal = localStorage.getItem(`mystery_y_drafts_${teamId}`);
+      let localDrafts: AnswerDraft[] = [];
+      if (savedLocal) {
+        try {
+          localDrafts = JSON.parse(savedLocal);
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // Merge: server drafts take precedence over local unless local has more recent keys
+      const mergedMap = new Map<string, AnswerDraft>();
+      serverDrafts.forEach((d) => mergedMap.set(d.question_id, d));
+      localDrafts.forEach((d) => {
+        if (!mergedMap.has(d.question_id)) {
+          mergedMap.set(d.question_id, d);
+        }
+      });
+
+      const finalDrafts = Array.from(mergedMap.values());
+      setDrafts(finalDrafts);
+      pendingUpdatesRef.current = finalDrafts;
+      localStorage.setItem(`mystery_y_drafts_${teamId}`, JSON.stringify(finalDrafts));
+      isLoadedRef.current = true;
+    } catch (err) {
+      console.error('Failed to sync drafts from database', err);
+    }
   }, [teamId]);
+
+  useEffect(() => {
+    fetchAuthoritativeDrafts();
+  }, [fetchAuthoritativeDrafts]);
 
   // Performs the actual network save operation (upserts to database atomically)
   const saveToServer = async (updatedDrafts: AnswerDraft[]) => {
-    if (!teamId) return;
+    if (!teamId || updatedDrafts.length === 0) return;
     setSyncStatus('saving');
 
     try {
-      // Batch upsert — uses the unique constraint (team_id, question_id)
-      // This replaces the old race-prone select→insert/update pattern
       const upsertRows = updatedDrafts.map((draft) => ({
         team_id: teamId,
         question_id: draft.question_id,
@@ -83,19 +102,28 @@ export function useAutoSave(
       setSyncStatus('error');
       setSyncError('Connection interrupted — retrying...');
 
-      // Retry after 5 seconds
+      // Retry after 4 seconds
       setTimeout(() => {
         saveToServer(updatedDrafts);
-      }, 5000);
+      }, 4000);
     }
   };
 
-  const updateAnswer = (questionId: string, answerText: string, selectedOptions: string[]) => {
+  const updateAnswer = (
+    questionId: string,
+    answerText: string,
+    selectedOptions: string[],
+    isImmediateChoice: boolean = false
+  ) => {
     setDrafts((prev) => {
       const idx = prev.findIndex((d) => d.question_id === questionId);
       let nextDrafts = [...prev];
 
-      const newDraft = { question_id: questionId, answer_text: answerText, selected_options: selectedOptions };
+      const newDraft: AnswerDraft = {
+        question_id: questionId,
+        answer_text: answerText,
+        selected_options: selectedOptions,
+      };
 
       if (idx !== -1) {
         nextDrafts[idx] = newDraft;
@@ -103,29 +131,40 @@ export function useAutoSave(
         nextDrafts.push(newDraft);
       }
 
-      // Update local cache
+      // Update local cache immediately
       if (teamId) {
         localStorage.setItem(`mystery_y_drafts_${teamId}`, JSON.stringify(nextDrafts));
       }
 
-      // Add to pending updates queue
       pendingUpdatesRef.current = nextDrafts;
 
-      // Debounce database write (1.5 seconds)
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
-      setSyncStatus('saving');
-      debounceTimerRef.current = setTimeout(() => {
-        saveToServer(pendingUpdatesRef.current);
-      }, 1500);
+
+      if (isImmediateChoice) {
+        // Save immediately for option selections
+        saveToServer(nextDrafts);
+      } else {
+        // Debounce text inputs (600ms)
+        setSyncStatus('saving');
+        debounceTimerRef.current = setTimeout(() => {
+          saveToServer(pendingUpdatesRef.current);
+        }, 600);
+      }
 
       return nextDrafts;
     });
   };
 
   const getAnswer = (questionId: string) => {
-    return drafts.find((d) => d.question_id === questionId) || { question_id: questionId, answer_text: '', selected_options: [] };
+    return (
+      drafts.find((d) => d.question_id === questionId) || {
+        question_id: questionId,
+        answer_text: '',
+        selected_options: [],
+      }
+    );
   };
 
   const clearLocalDrafts = () => {
@@ -141,6 +180,7 @@ export function useAutoSave(
     getAnswer,
     syncStatus,
     syncError,
-    clearLocalDrafts
+    clearLocalDrafts,
+    refetchDrafts: fetchAuthoritativeDrafts,
   };
 }

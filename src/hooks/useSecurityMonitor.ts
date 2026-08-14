@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface SecurityEventDetails {
@@ -15,10 +15,13 @@ export function useSecurityMonitor(
   const [activeWarning, setActiveWarning] = useState<'warn_1' | 'warn_2' | 'block' | null>(null);
   const [lastEvent, setLastEvent] = useState<string>('TAB SWITCH DETECTED');
 
-  const isDepartedRef = useRef(false);
+  const isAwayRef = useRef(false);
+  const waitingForAckRef = useRef(false);
 
   const mapEventTypeToLabel = (type: string) => {
     switch (type) {
+      case 'fullscreen_exit':
+        return 'FULLSCREEN EXIT DETECTED';
       case 'copy_attempt':
         return 'CLIPBOARD COPY DETECTED';
       case 'paste_attempt':
@@ -35,57 +38,72 @@ export function useSecurityMonitor(
     }
   };
 
+  const isDepartureEvent = (type: string) => {
+    return type === 'tab_switch' || type === 'window_blur' || type === 'tab_blur';
+  };
+
   // Sync initial violations from DB on load
-  useEffect(() => {
+  const loadLogs = useCallback(async () => {
     if (!teamId || !sessionId) return;
 
-    async function loadLogs() {
-      try {
-        const { data, error } = await supabase
-          .from('security_logs')
-          .select('id, event_type')
-          .eq('team_id', teamId)
-          .eq('session_id', sessionId);
+    try {
+      const { data, error } = await supabase
+        .from('security_logs')
+        .select('id, event_type, created_at')
+        .eq('team_id', teamId)
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
 
-        if (!error && data) {
-          const totalViolations = data.length;
-          setViolations(totalViolations);
+      if (!error && data) {
+        // Filter strictly for departure violations (tab_switch / window_blur)
+        const departureLogs = data.filter((log: any) => isDepartureEvent(log.event_type));
+        const totalDepartureViolations = departureLogs.length;
+        setViolations(totalDepartureViolations);
 
-          // Get the list of already acknowledged violations for this session from local storage
-          const acknowledgedIds = JSON.parse(
-            localStorage.getItem(`mystery_y_ack_logs_${sessionId}`) || '[]'
-          );
+        // Check local storage acknowledged log IDs
+        const acknowledgedIds = JSON.parse(
+          localStorage.getItem(`mystery_y_ack_logs_${sessionId}`) || '[]'
+        );
 
-          // Find the first unacknowledged violation
-          const unacknowledged = data.filter((log: any) => !acknowledgedIds.includes(log.id));
+        // Find unacknowledged departure violations
+        const unacknowledged = departureLogs.filter((log: any) => !acknowledgedIds.includes(log.id));
 
-          if (unacknowledged.length > 0) {
-            // There is an unacknowledged violation!
-            const latestLog = unacknowledged[unacknowledged.length - 1];
-            setLastEvent(mapEventTypeToLabel(latestLog.event_type));
-            
-            isDepartedRef.current = true; // Lock events since warning is active
+        if (totalDepartureViolations >= 3) {
+          setActiveWarning('block');
+          isAwayRef.current = true;
+          waitingForAckRef.current = true;
+          setLastEvent('SECURITY REVIEW REQUIRED — MULTIPLE TAB SWITCHES');
+        } else if (unacknowledged.length > 0) {
+          const latestLog = unacknowledged[unacknowledged.length - 1];
+          setLastEvent(mapEventTypeToLabel(latestLog.event_type));
+          isAwayRef.current = true;
+          waitingForAckRef.current = true;
 
-            if (totalViolations === 1) {
-              setActiveWarning('warn_1');
-            } else if (totalViolations === 2) {
-              setActiveWarning('warn_2');
-            } else if (totalViolations >= 3) {
-              setActiveWarning('block');
-            }
-          } else {
-            setActiveWarning(null);
-            isDepartedRef.current = false;
+          if (totalDepartureViolations === 1) {
+            setActiveWarning('warn_1');
+          } else if (totalDepartureViolations === 2) {
+            setActiveWarning('warn_2');
           }
+        } else {
+          setActiveWarning(null);
+          isAwayRef.current = false;
+          waitingForAckRef.current = false;
         }
-      } catch (err) {
-        console.error('Failed to sync security logs', err);
       }
+    } catch (err) {
+      console.error('Failed to sync security logs', err);
     }
-    loadLogs();
   }, [teamId, sessionId]);
 
-  const logViolation = async (eventType: string, severity: 'low' | 'medium' | 'high' = 'low') => {
+  useEffect(() => {
+    loadLogs();
+  }, [loadLogs]);
+
+  const logViolation = async (
+    eventType: string,
+    severity: 'low' | 'medium' | 'high' = 'low',
+    clientEventId?: string
+  ) => {
     if (!teamId || !sessionId) return;
 
     const details: SecurityEventDetails = {
@@ -93,23 +111,33 @@ export function useSecurityMonitor(
       timestamp: new Date().toISOString(),
     };
 
+    const eventId = clientEventId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined);
+
     try {
-      // 1. Insert security log record
-      const { data, error } = await supabase.from('security_logs').insert({
+      // 1. Insert security log record with client_event_id idempotency
+      const insertPayload: any = {
         team_id: teamId,
         session_id: sessionId,
         event_type: eventType,
         details,
         severity,
-        is_reviewed: false
-      });
+        is_reviewed: false,
+      };
 
-      if (error) {
-        console.error('Database failed to write security log', error);
-        return;
+      if (eventId) {
+        insertPayload.client_event_id = eventId;
       }
 
-      // 2. Fetch updated list of logs to derive the authoritative count
+      const { error } = await supabase.from('security_logs').insert(insertPayload);
+
+      if (error) {
+        // If unique constraint error on client_event_id, ignore gracefully as duplicate event
+        if (!error.message.includes('unique constraint') && !error.message.includes('duplicate key')) {
+          console.error('Database failed to write security log', error);
+        }
+      }
+
+      // 2. Fetch updated list of logs to derive authoritative departure count
       const { data: allLogs, error: fetchError } = await supabase
         .from('security_logs')
         .select('id, event_type')
@@ -117,22 +145,25 @@ export function useSecurityMonitor(
         .eq('session_id', sessionId);
 
       if (!fetchError && allLogs) {
-        const nextViolations = allLogs.length;
-        setViolations(nextViolations);
-        setLastEvent(mapEventTypeToLabel(eventType));
+        const departureLogs = allLogs.filter((l: any) => isDepartureEvent(l.event_type));
+        const nextViolations = departureLogs.length;
 
-        // Determine warning overlay level
-        if (nextViolations === 1) {
-          setActiveWarning('warn_1');
-        } else if (nextViolations === 2) {
-          setActiveWarning('warn_2');
-        } else if (nextViolations >= 3) {
-          setActiveWarning('block');
+        if (isDepartureEvent(eventType)) {
+          setViolations(nextViolations);
+          setLastEvent(mapEventTypeToLabel(eventType));
+
+          if (nextViolations === 1) {
+            setActiveWarning('warn_1');
+          } else if (nextViolations === 2) {
+            setActiveWarning('warn_2');
+          } else if (nextViolations >= 3) {
+            setActiveWarning('block');
+          }
         }
       }
 
       if (onDisciplinaryAlert) {
-        onDisciplinaryAlert(severity, `VIOLATION DETECTED: ${eventType.toUpperCase()}`);
+        onDisciplinaryAlert(severity, `SECURITY MONITOR: ${eventType.toUpperCase()}`);
       }
     } catch (err) {
       console.error('Error logging violation', err);
@@ -142,75 +173,86 @@ export function useSecurityMonitor(
   useEffect(() => {
     if (!teamId || !sessionId) return;
 
-    // A. Detect Window Blur (defocus) — user leaves the window
-    const handleBlur = () => {
-      if (isDepartedRef.current) return;
-      isDepartedRef.current = true;
-      logViolation('tab_switch', 'medium');
-    };
-
-    // B. Detect Tab Switches / Hidden Pages
+    // Visibility change handler — primary departure signal
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        if (isDepartedRef.current) return;
-        isDepartedRef.current = true;
-        logViolation('tab_switch', 'medium');
+        if (isAwayRef.current || waitingForAckRef.current) return;
+        isAwayRef.current = true;
+        const clientEventId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+        logViolation('tab_switch', 'medium', clientEventId);
       } else if (document.visibilityState === 'visible') {
-        // User has returned to the tab — clear departure flag
-        // The warning overlay will still show; isDepartedRef just controls event dedup
-        isDepartedRef.current = false;
+        // Returning to tab: keep warning mounted if set, but set waitingForAck
+        if (activeWarning) {
+          waitingForAckRef.current = true;
+        }
       }
     };
 
-    // C. Detect Focus return (user clicks back to window)
-    const handleFocus = () => {
-      // Reset departure flag so the NEXT departure counts as a new event
-      isDepartedRef.current = false;
+    // Blur event — secondary departure signal (ignored if already away via visibilityState)
+    const handleBlur = () => {
+      if (isAwayRef.current || waitingForAckRef.current) return;
+      isAwayRef.current = true;
+      const clientEventId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+      logViolation('window_blur', 'medium', clientEventId);
     };
 
-    // D. Detect Copy
+    // Focus event
+    const handleFocus = () => {
+      // If no warning pending, reset away flag
+      if (!waitingForAckRef.current && !activeWarning) {
+        isAwayRef.current = false;
+      }
+    };
+
+    // Fullscreen change monitor — log FULLSCREEN_EXIT without incrementing tab switch 3/3 count
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        logViolation('fullscreen_exit', 'medium');
+      }
+    };
+
+    // Copy / Paste / Cut / Context Menu — logged without increasing tab switch count
     const handleCopy = (e: ClipboardEvent) => {
       e.preventDefault();
       logViolation('copy_attempt', 'low');
     };
 
-    // E. Detect Paste
     const handlePaste = (e: ClipboardEvent) => {
       e.preventDefault();
       logViolation('paste_attempt', 'low');
     };
 
-    // F. Detect Cut
     const handleCut = (e: ClipboardEvent) => {
       e.preventDefault();
       logViolation('cut_attempt', 'low');
     };
 
-    // G. Detect Right-Click Context Menu
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       logViolation('context_menu', 'low');
     };
 
-    // Attach Event Listeners
+    // Register event listeners
+    document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
     window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibility);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('copy', handleCopy);
     document.addEventListener('paste', handlePaste);
     document.addEventListener('cut', handleCut);
     document.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('copy', handleCopy);
       document.removeEventListener('paste', handlePaste);
       document.removeEventListener('cut', handleCut);
       document.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [teamId, sessionId]);
+  }, [teamId, sessionId, activeWarning]);
 
   const dismissWarning = async () => {
     if (activeWarning !== 'block') {
@@ -231,9 +273,10 @@ export function useSecurityMonitor(
       } catch (err) {
         console.error('Failed to acknowledge warning', err);
       }
-      
+
       setActiveWarning(null);
-      isDepartedRef.current = false;
+      isAwayRef.current = false;
+      waitingForAckRef.current = false;
     }
   };
 
@@ -242,6 +285,6 @@ export function useSecurityMonitor(
     activeWarning,
     lastEvent,
     dismissWarning,
-    logCustomViolation: logViolation
+    logCustomViolation: logViolation,
   };
 }

@@ -63,38 +63,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Initialize and check current sessions on load
   useEffect(() => {
-    // 1. Listen to real Supabase Auth state changes (handles session refresh, login, logout)
+    let mounted = true;
+
+    async function initAuth() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id, email, role, status')
+            .eq('id', session.user.id)
+            .single();
+
+          if (mounted && profile && profile.status !== 'disabled') {
+            setAdminUser(profile as AdminProfile);
+          }
+        }
+      } catch (err) {
+        console.error('Failed initial auth session check', err);
+      } finally {
+        if (mounted) {
+          setIsAdminLoading(false);
+        }
+      }
+    }
+
+    initAuth();
+
+    // Listen to real Supabase Auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (session?.user) {
           try {
-            const { data: profile, error: profileError } = await supabase
+            const { data: profile } = await supabase
               .from('profiles')
-              .select('id, email, role')
+              .select('id, email, role, status')
               .eq('id', session.user.id)
               .single();
 
-            if (!profileError && profile) {
+            if (profile && profile.status !== 'disabled') {
               setAdminUser(profile as AdminProfile);
-            } else if (event !== 'INITIAL_SESSION') {
+            } else {
               setAdminUser(null);
             }
           } catch (err) {
             console.error('Failed to fetch profile on auth state change', err);
           }
         } else {
-          if (event === 'SIGNED_OUT') {
-            setAdminUser(null);
-          }
+          setAdminUser(null);
         }
         setIsAdminLoading(false);
       }
     );
 
-    // 2. Check Participant Session from Local Storage and verify against database
+    // Check Participant Session from Local Storage and verify against database
     syncParticipantSession();
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
@@ -286,6 +312,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentTeam(teamInfo);
       localStorage.setItem('mystery_y_team', JSON.stringify(teamInfo));
+      localStorage.setItem('mystery_y_team_id', teamInfo.id);
       localStorage.setItem('mystery_y_access_code_id', data.access_code_id);
       return true;
     } catch (err: any) {
@@ -328,6 +355,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentSession(sessionInfo);
       localStorage.setItem('mystery_y_session', JSON.stringify(sessionInfo));
+      localStorage.setItem('mystery_y_session_id', sessionInfo.id);
       return true;
     } catch (err: any) {
       setParticipantError(err.message || 'Failed to start investigation');
@@ -343,6 +371,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setParticipantError(null);
     localStorage.removeItem('mystery_y_team');
     localStorage.removeItem('mystery_y_session');
+    localStorage.removeItem('mystery_y_team_id');
+    localStorage.removeItem('mystery_y_session_id');
+    localStorage.removeItem('mystery_y_submission_id');
     localStorage.removeItem('mystery_y_access_code_id');
   };
 
