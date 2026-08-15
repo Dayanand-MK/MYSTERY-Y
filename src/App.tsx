@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './hooks/useAuth';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 // Participant Pages
 import Landing from './pages/participant/Landing';
@@ -63,6 +64,7 @@ export default function App() {
           {/* Redirect fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <SpeedInsights />
       </AuthProvider>
     </BrowserRouter>
   );
