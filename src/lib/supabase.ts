@@ -726,6 +726,29 @@ class MockSupabaseClient {
         return { data: { success: true, session_id: p_session_id, team_id: sessions[index].team_id, unlocked_by: profile.email, unlocked_at: new Date().toISOString() }, error: null };
       }
 
+      if (functionName === 'delete_unused_case_access_code') {
+        const code = db.query<any>('case_access_codes').find((item: any) => item.id === args.p_code_id);
+        if (!code) return { data: { success: false, error: 'ACCESS_CODE_NOT_FOUND' }, error: null };
+        if (code.status !== 'available' || code.team_id) return { data: { success: false, error: 'USED_OR_ASSIGNED_CODES_CANNOT_BE_DELETED' }, error: null };
+        db.save('case_access_codes', db.query<any>('case_access_codes').filter((item: any) => item.id !== code.id));
+        return { data: { success: true }, error: null };
+      }
+
+      if (functionName === 'delete_case_dossier') {
+        const profile = db.query<any>('profiles').find((p: any) => p.email === localStorage.getItem('mystery_y_mock_email'));
+        const caseItem = db.query<any>('cases').find((item: any) => item.id === args.p_case_id);
+        if (!profile || profile.role !== 'super_admin') return { data: { success: false, error: 'SUPER_ADMIN_REQUIRED' }, error: null };
+        if (!caseItem) return { data: { success: false, error: 'CASE_NOT_FOUND' }, error: null };
+        if (caseItem.case_number !== args.p_case_number_confirmation) return { data: { success: false, error: 'CASE_NUMBER_CONFIRMATION_MISMATCH' }, error: null };
+        if (db.query<any>('teams').some((team: any) => team.case_id === caseItem.id) || db.query<any>('submissions').some((sub: any) => sub.case_id === caseItem.id)) return { data: { success: false, error: 'CASE_HAS_PARTICIPANT_HISTORY' }, error: null };
+        const questionIds = db.query<any>('questions').filter((q: any) => q.case_id === caseItem.id).map((q: any) => q.id);
+        db.save('question_options', db.query<any>('question_options').filter((o: any) => !questionIds.includes(o.question_id)));
+        db.save('questions', db.query<any>('questions').filter((q: any) => q.case_id !== caseItem.id));
+        db.save('case_access_codes', db.query<any>('case_access_codes').filter((code: any) => code.case_id !== caseItem.id));
+        db.save('cases', db.query<any>('cases').filter((item: any) => item.id !== caseItem.id));
+        return { data: { success: true }, error: null };
+      }
+
       if (functionName === 'submit_investigation_transaction') {
         const { p_session_id, p_client_answers } = args;
         const sessions = db.query<any>('investigation_sessions');

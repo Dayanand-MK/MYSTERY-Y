@@ -1,18 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
-import { Plus, Briefcase, FileText, Film, Settings, Loader, Eye, RefreshCw, Key, ShieldAlert, Copy, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { useAuth } from '../../hooks/useAuth';
+import { Plus, Briefcase, FileText, Film, Settings, Loader, Eye, RefreshCw, Key, ShieldAlert, Copy, Check, X, ChevronDown, ChevronUp, Pencil, Trash2, Archive } from 'lucide-react';
 
 export default function Cases() {
   const navigate = useNavigate();
+  const { adminUser, isSuperAdmin } = useAuth();
 
   const [cases, setCases] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [codes, setCodes] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Creator form state
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingCase, setEditingCase] = useState<any>(null);
+  const [deleteCase, setDeleteCase] = useState<any>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [eventId, setEventId] = useState('');
   const [caseNumber, setCaseNumber] = useState('');
   const [title, setTitle] = useState('');
@@ -73,7 +79,10 @@ export default function Cases() {
     try {
       const { data: cData } = await supabase.from('cases').select('*');
       const { data: eData } = await supabase.from('events').select('id, name');
-      const { data: cdData } = await supabase.from('case_access_codes').select('*');
+      const [{ data: cdData }, { data: qData }] = await Promise.all([
+        supabase.from('case_access_codes').select('*'),
+        supabase.from('questions').select('id, case_id, marks'),
+      ]);
 
       if (cData) setCases(cData);
       if (eData) {
@@ -81,6 +90,7 @@ export default function Cases() {
         if (eData.length > 0) setEventId(eData[0].id);
       }
       if (cdData) setCodes(cdData);
+      if (qData) setQuestions(qData);
     } catch (err) {
       console.error('Failed to load cases details', err);
     } finally {
@@ -111,11 +121,14 @@ export default function Cases() {
     };
 
     try {
-      const { error } = await supabase.from('cases').insert(payload);
+      const { error } = editingCase
+        ? await supabase.from('cases').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingCase.id)
+        : await supabase.from('cases').insert(payload);
       if (error) {
         setErrorMsg(error.message);
       } else {
         setShowCreateForm(false);
+        setEditingCase(null);
         // Clear all form fields
         setCaseNumber('');
         setTitle('');
@@ -132,6 +145,38 @@ export default function Cases() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const openEditCase = (c: any) => {
+    setEditingCase(c); setEventId(c.event_id); setCaseNumber(c.case_number); setTitle(c.title); setDescription(c.description || '');
+    setVideoPath(c.video_path || ''); setDurationLimit(c.duration_limit); setTotalMarks(c.total_marks); setStatus(c.status);
+    setBriefingMediaType(c.briefing_media_type || 'none'); setBriefingMediaUrl(c.briefing_media_url || ''); setBriefingTitle(c.briefing_title || 'Case Briefing'); setBriefingText(c.briefing_text || '');
+    setErrorMsg(null); setShowCreateForm(true);
+  };
+
+  const handleDeleteUnusedCode = async (codeId: string) => {
+    if (!confirm('DELETE ACCESS CODE? This unused code will be permanently removed.')) return;
+    const { data, error } = await supabase.rpc('delete_unused_case_access_code', { p_code_id: codeId });
+    if (error || !data?.success) { alert(error?.message || data?.error || 'Unable to delete access code.'); return; }
+    loadData();
+  };
+
+  const handleDisableCode = async (code: any) => {
+    const next = code.status === 'disabled' ? 'available' : 'disabled';
+    const { error } = await supabase.from('case_access_codes').update({ status: next }).eq('id', code.id);
+    if (error) alert(error.message); else loadData();
+  };
+
+  const handleArchiveCase = async (c: any) => {
+    const { error } = await supabase.from('cases').update({ status: 'inactive', updated_at: new Date().toISOString() }).eq('id', c.id);
+    if (error) alert(error.message); else loadData();
+  };
+
+  const handlePermanentDelete = async () => {
+    if (!deleteCase) return;
+    const { data, error } = await supabase.rpc('delete_case_dossier', { p_case_id: deleteCase.id, p_case_number_confirmation: deleteConfirmation });
+    if (error || !data?.success) { setErrorMsg(error?.message || data?.error || 'Unable to delete case.'); return; }
+    setDeleteCase(null); setDeleteConfirmation(''); loadData();
   };
 
   // Toggle case status directly
@@ -204,6 +249,7 @@ export default function Cases() {
       used: caseCodes.filter((c) => c.status === 'used').length
     };
   };
+  const getCaseQuestionCount = (caseId: string) => questions.filter((q) => q.case_id === caseId).length;
 
   return (
     <div className="space-y-6 font-mono text-sm">
@@ -217,7 +263,7 @@ export default function Cases() {
           </p>
         </div>
         <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
+          onClick={() => { setEditingCase(null); setShowCreateForm(!showCreateForm); }}
           className="flex items-center gap-1.5 bg-detective-crimson hover:bg-detective-alert text-white px-4 py-2 rounded text-xs font-bold tracking-wider uppercase transition-colors"
         >
           <Plus className="w-4 h-4" /> Create Case
@@ -228,7 +274,7 @@ export default function Cases() {
       {showCreateForm && (
         <form onSubmit={handleCreateCase} className="bg-detective-panel border border-detective-border rounded p-6 space-y-4">
           <h3 className="text-xs font-bold uppercase border-b border-detective-border pb-2 text-white flex items-center gap-2">
-            <Briefcase className="w-4 h-4 text-detective-crimson" /> New Case Dossier Form
+            <Briefcase className="w-4 h-4 text-detective-crimson" /> {editingCase ? 'Edit Case Dossier' : 'New Case Dossier Form'}
           </h3>
 
           {errorMsg && (
@@ -413,7 +459,7 @@ export default function Cases() {
               disabled={isSubmitting}
               className="px-5 py-2 rounded bg-detective-crimson text-white hover:bg-detective-alert font-bold disabled:opacity-50 text-xs"
             >
-              {isSubmitting ? 'Saving Dossier...' : 'Create Case'}
+              {isSubmitting ? 'Saving Dossier...' : editingCase ? 'Save Case Changes' : 'Create Case'}
             </button>
           </div>
         </form>
@@ -433,6 +479,7 @@ export default function Cases() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {cases.map((c) => {
             const codeStats = getCaseCodesCount(c.id);
+            const questionCount = getCaseQuestionCount(c.id);
             return (
               <div key={c.id} className="bg-detective-panel border border-detective-border rounded p-5 flex flex-col justify-between shadow-md relative">
                 
@@ -455,6 +502,12 @@ export default function Cases() {
                 <p className="text-[11px] text-detective-text/80 leading-relaxed truncate mb-4">
                   {c.description}
                 </p>
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-detective-muted mb-3">
+                  <span>DURATION: <b className="text-white">{c.duration_limit} MIN</b></span>
+                  <span>MARKS: <b className="text-white">{c.total_marks}</b></span>
+                  <span>QUESTIONS: <b className="text-white">{questionCount}</b></span>
+                  <span>UPDATED: <b className="text-white">{c.updated_at ? new Date(c.updated_at).toLocaleDateString() : '—'}</b></span>
+                </div>
 
                 {/* Code Statistics & Card Keys Panel */}
                 <div className="bg-black/35 rounded border border-detective-border/50 p-3 mb-4 space-y-2">
@@ -560,6 +613,9 @@ export default function Cases() {
                     >
                       <Eye className="w-3.5 h-3.5" /> Preview
                     </button>
+                    <button onClick={() => openEditCase(c)} className="flex items-center gap-1 bg-black/30 hover:bg-black/60 border border-detective-border text-detective-muted hover:text-white px-2 py-1 rounded transition-colors">
+                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    </button>
                     
                     <button
                       onClick={() => {
@@ -590,6 +646,14 @@ export default function Cases() {
                     >
                       Questions
                     </button>
+                    <button onClick={() => handleArchiveCase(c)} className="bg-black/30 hover:bg-black/60 border border-detective-border text-detective-amber px-2 py-1 rounded font-bold uppercase">
+                      <Archive className="w-3.5 h-3.5 inline mr-1" /> Archive
+                    </button>
+                    {isSuperAdmin && (
+                      <button onClick={() => { setDeleteCase(c); setDeleteConfirmation(''); setErrorMsg(null); }} className="bg-detective-crimson/15 hover:bg-detective-crimson border border-detective-crimson/50 text-detective-alert hover:text-white px-2 py-1 rounded font-bold uppercase">
+                        <Trash2 className="w-3.5 h-3.5 inline mr-1" /> Delete
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -625,16 +689,15 @@ export default function Cases() {
 
             {/* Access Codes List Section */}
             {(() => {
-              const availableCodes = codes.filter(
-                (c) => c.case_id === selectedCaseForCodes.id && c.status === 'available'
-              );
+              const caseCodes = codes.filter((c) => c.case_id === selectedCaseForCodes.id);
+              const availableCodes = caseCodes.filter((c) => c.status === 'available');
               const isCopiedAll = copiedAllCaseId === selectedCaseForCodes.id;
 
               return (
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] uppercase font-bold text-detective-muted tracking-wider">
-                      Available Access Keys ({availableCodes.length})
+                      Access Keys ({caseCodes.length})
                     </span>
                     {availableCodes.length > 0 && (
                       <button
@@ -656,13 +719,13 @@ export default function Cases() {
                     )}
                   </div>
 
-                  {availableCodes.length === 0 ? (
+                  {caseCodes.length === 0 ? (
                     <div className="bg-black/30 border border-dashed border-detective-border/50 rounded p-4 text-center text-detective-muted text-[11px]">
                       No available codes — generate more below
                     </div>
                   ) : (
                     <div className="max-h-56 overflow-y-auto space-y-2 pr-1 border border-detective-border/40 rounded p-2 bg-black/40">
-                      {availableCodes.map((c) => {
+                      {caseCodes.map((c) => {
                         const isCopied = copiedCodeId === c.id;
                         return (
                           <div
@@ -673,9 +736,9 @@ export default function Cases() {
                               {c.code}
                             </span>
                             <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 rounded text-[8px] font-bold border border-detective-green/40 text-detective-green bg-detective-green/10 uppercase">
-                                {c.status}
-                              </span>
+                               <span className={`px-2 py-0.5 rounded text-[8px] font-bold border uppercase ${c.status === 'available' ? 'border-detective-green/40 text-detective-green bg-detective-green/10' : 'border-detective-amber/40 text-detective-amber bg-detective-amber/10'}`}>
+                                 {c.status}
+                               </span>
                               <button
                                 onClick={() => handleCopyCode(c.code, c.id)}
                                 className="flex items-center gap-1 bg-black/40 hover:bg-black border border-detective-border text-detective-muted hover:text-white px-2 py-1 rounded text-[10px] transition-colors font-mono"
@@ -692,7 +755,15 @@ export default function Cases() {
                                     <span>Copy</span>
                                   </>
                                 )}
-                              </button>
+                               </button>
+                               {c.status === 'available' && (
+                                 <button onClick={() => handleDeleteUnusedCode(c.id)} className="text-detective-alert hover:text-white" title="Delete unused code"><Trash2 className="w-3.5 h-3.5" /></button>
+                               )}
+                               {c.status !== 'used' && c.status !== 'assigned' && (
+                                 <button onClick={() => handleDisableCode(c)} className="text-detective-amber hover:text-white text-[9px] font-bold">
+                                   {c.status === 'disabled' ? 'ENABLE' : 'DISABLE'}
+                                 </button>
+                               )}
                             </div>
                           </div>
                         );
@@ -818,6 +889,28 @@ export default function Cases() {
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {deleteCase && (
+        <div className="fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="max-w-md w-full bg-detective-panel border border-detective-crimson rounded p-6 space-y-4 font-mono text-xs">
+            <div className="flex items-center gap-2 text-detective-alert font-bold uppercase tracking-wider"><Trash2 className="w-5 h-5" /> Delete Case Dossier?</div>
+            <div className="bg-black/30 border border-detective-border rounded p-3 space-y-1">
+              <div>CASE: <b className="text-white">{deleteCase.case_number}</b></div>
+              <div>TITLE: <b className="text-white">{deleteCase.title}</b></div>
+              <div>QUESTIONS: <b className="text-white">{getCaseQuestionCount(deleteCase.id)}</b> · ACCESS CODES: <b className="text-white">{getCaseCodesCount(deleteCase.id).total}</b></div>
+            </div>
+            <p className="text-detective-muted leading-relaxed">This is a Super Admin-only permanent action. Cases with participant teams or submissions are protected and cannot be deleted.</p>
+            <label className="block text-detective-amber uppercase font-bold">Type {deleteCase.case_number} to confirm
+              <input value={deleteConfirmation} onChange={(e) => setDeleteConfirmation(e.target.value)} className="mt-2 w-full bg-black/50 border border-detective-border rounded p-2 text-white" />
+            </label>
+            {errorMsg && <div className="text-detective-alert">{errorMsg}</div>}
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setDeleteCase(null)} className="px-3 py-2 border border-detective-border rounded text-detective-muted">Cancel</button>
+              <button disabled={deleteConfirmation !== deleteCase.case_number || !adminUser} onClick={handlePermanentDelete} className="px-3 py-2 bg-detective-crimson text-white rounded font-bold disabled:opacity-40">Permanently Delete Case</button>
+            </div>
           </div>
         </div>
       )}

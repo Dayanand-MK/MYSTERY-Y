@@ -34,6 +34,14 @@ export default function QuestionBuilder() {
   const [rubricDescription, setRubricDescription] = useState('');
   const [rubricMaxMarks, setRubricMaxMarks] = useState(5);
   const [activeQuestionForRubric, setActiveQuestionForRubric] = useState<any>(null);
+  const [editingQuestion, setEditingQuestion] = useState<any>(null);
+  const [editOptions, setEditOptions] = useState<any[]>([]);
+
+  const recalculateTotalMarks = async () => {
+    const { data } = await supabase.from('questions').select('marks').eq('case_id', caseId);
+    const total = (data || []).reduce((sum: number, q: any) => sum + Number(q.marks || 0), 0);
+    await supabase.from('cases').update({ total_marks: total, updated_at: new Date().toISOString() }).eq('id', caseId);
+  };
 
   useEffect(() => {
     if (!caseId) {
@@ -180,6 +188,7 @@ export default function QuestionBuilder() {
       setCorrectOptionIdxs([0]);
 
       loadData();
+      await recalculateTotalMarks();
     } catch (err: any) {
       setErrorMsg(err.message || 'Build transaction error');
     } finally {
@@ -191,6 +200,7 @@ export default function QuestionBuilder() {
     if (!confirm('DELETE THIS INCIDENT INQUIRY? THIS REMOVES CORRESPONDING OPTIONS/ANSWERS.')) return;
     try {
       await supabase.from('questions').delete().eq('id', qId);
+      await recalculateTotalMarks();
       loadData();
     } catch (err) {
       console.error('Delete failed', err);
@@ -229,6 +239,36 @@ export default function QuestionBuilder() {
 
   const getQuestionRubrics = (qId: string) => {
     return rubrics.filter((r) => r.question_id === qId);
+  };
+
+  const openQuestionEditor = (question: any) => {
+    setEditingQuestion({ ...question });
+    setEditOptions(getQuestionOptions(question.id).map((option) => ({ ...option })));
+  };
+
+  const saveQuestionEditor = async () => {
+    if (!editingQuestion?.question_text?.trim()) return;
+    const isChoice = ['single_choice', 'multiple_choice', 'evidence_selection'].includes(editingQuestion.type);
+    const usable = editOptions.filter((option) => option.option_text?.trim());
+    if (isChoice && (usable.length < 2 || !usable.some((option) => option.is_correct))) {
+      setErrorMsg('CHOICE QUESTIONS REQUIRE TWO OPTIONS AND AT LEAST ONE CORRECT ANSWER'); return;
+    }
+    const { error } = await supabase.from('questions').update({
+      question_text: editingQuestion.question_text.trim(), type: editingQuestion.type, marks: Number(editingQuestion.marks),
+      is_required: Boolean(editingQuestion.is_required), sort_order: Number(editingQuestion.sort_order),
+      evaluation_notes: editingQuestion.evaluation_notes || '', expected_concepts: editingQuestion.expected_concepts || [],
+    }).eq('id', editingQuestion.id);
+    if (error) { setErrorMsg(error.message); return; }
+    for (let index = 0; index < usable.length; index++) {
+      const option = usable[index];
+      const payload = { option_text: option.option_text.trim(), is_correct: Boolean(option.is_correct), sort_order: index + 1 };
+      if (option.id) await supabase.from('question_options').update(payload).eq('id', option.id);
+      else await supabase.from('question_options').insert({ ...payload, question_id: editingQuestion.id });
+    }
+    const retainedIds = usable.filter((option) => option.id).map((option) => option.id);
+    const oldIds = getQuestionOptions(editingQuestion.id).map((option) => option.id).filter((id) => !retainedIds.includes(id));
+    for (const id of oldIds) await supabase.from('question_options').delete().eq('id', id);
+    await recalculateTotalMarks(); setEditingQuestion(null); loadData();
   };
 
   if (isLoading || !caseDetail) {
@@ -479,6 +519,9 @@ export default function QuestionBuilder() {
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
+                    <button onClick={() => openQuestionEditor(q)} className="absolute top-4 right-11 text-detective-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                      EDIT
+                    </button>
 
                     {/* Question text */}
                     <div>
@@ -641,6 +684,24 @@ export default function QuestionBuilder() {
                 Add Criterion
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {editingQuestion && (
+        <div className="fixed inset-0 bg-black/85 z-50 overflow-y-auto p-4 flex justify-center">
+          <div className="my-auto max-w-2xl w-full bg-detective-panel border border-detective-crimson rounded p-6 font-mono text-xs space-y-4">
+            <div className="flex justify-between border-b border-detective-border pb-3"><h3 className="font-bold text-white uppercase">Edit Inquiry Question</h3><button onClick={() => setEditingQuestion(null)}><Trash2 className="w-4 h-4 text-detective-muted" /></button></div>
+            <textarea value={editingQuestion.question_text} onChange={(e) => setEditingQuestion({ ...editingQuestion, question_text: e.target.value })} rows={3} className="w-full bg-black/40 border border-detective-border rounded p-2 text-white" />
+            <div className="grid grid-cols-2 gap-3">
+              <select value={editingQuestion.type} onChange={(e) => setEditingQuestion({ ...editingQuestion, type: e.target.value })} className="bg-black/40 border border-detective-border rounded p-2 text-white">
+                {['single_choice','multiple_choice','short_answer','long_answer','number','time','evidence_selection'].map((value) => <option key={value} value={value}>{value.replace('_', ' ')}</option>)}
+              </select>
+              <input type="number" value={editingQuestion.marks} onChange={(e) => setEditingQuestion({ ...editingQuestion, marks: Number(e.target.value) })} className="bg-black/40 border border-detective-border rounded p-2 text-white" />
+            </div>
+            <label className="flex gap-2 text-white"><input type="checkbox" checked={editingQuestion.is_required} onChange={(e) => setEditingQuestion({ ...editingQuestion, is_required: e.target.checked })} /> Required</label>
+            {['single_choice','multiple_choice','evidence_selection'].includes(editingQuestion.type) && <div className="space-y-2 border-t border-detective-border pt-3"><b className="text-detective-amber uppercase">Options / Correct Answers</b>{editOptions.map((option, index) => <div key={option.id || index} className="flex gap-2"><input type="checkbox" checked={option.is_correct} onChange={(e) => setEditOptions(editOptions.map((item, i) => i === index ? { ...item, is_correct: e.target.checked } : item))} /><input value={option.option_text} onChange={(e) => setEditOptions(editOptions.map((item, i) => i === index ? { ...item, option_text: e.target.value } : item))} className="flex-1 bg-black/40 border border-detective-border rounded p-2 text-white"/><button onClick={() => setEditOptions(editOptions.filter((_, i) => i !== index))} className="text-detective-alert">DELETE</button></div>)}<button onClick={() => setEditOptions([...editOptions, { option_text: '', is_correct: false }])} className="text-detective-amber font-bold">+ ADD OPTION</button></div>}
+            <div className="flex justify-end gap-3"><button onClick={() => setEditingQuestion(null)} className="px-3 py-2 border border-detective-border rounded text-detective-muted">Cancel</button><button onClick={saveQuestionEditor} className="px-3 py-2 bg-detective-crimson text-white rounded font-bold">Save Question</button></div>
           </div>
         </div>
       )}
