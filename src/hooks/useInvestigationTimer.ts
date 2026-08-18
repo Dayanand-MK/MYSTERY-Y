@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 
-export function useInvestigationTimer(startedAt: string | null | undefined, durationLimitMinutes: number = 60) {
+export function useInvestigationTimer(
+  startedAt: string | null | undefined,
+  durationLimitMinutes: number = 60,
+  isPaused: boolean = false
+) {
   const [seconds, setSeconds] = useState(0);
   const offsetRef = useRef<number>(0);
 
@@ -17,6 +21,9 @@ export function useInvestigationTimer(startedAt: string | null | undefined, dura
     }
 
     const calculateElapsed = () => {
+      if (isPaused) {
+        return;
+      }
       const nowMs = Date.now();
       const elapsedSec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
       setSeconds(elapsedSec);
@@ -26,7 +33,7 @@ export function useInvestigationTimer(startedAt: string | null | undefined, dura
     const interval = setInterval(calculateElapsed, 1000);
 
     return () => clearInterval(interval);
-  }, [startedAt]);
+  }, [startedAt, isPaused]);
 
   const formatTime = () => {
     const hrs = Math.floor(seconds / 3600);
@@ -57,6 +64,8 @@ export function useInvestigationTimer(startedAt: string | null | undefined, dura
     isTimeLimitExceeded,
     remainingSeconds,
     formattedRemaining: formatRemaining(),
+    isWarning: remainingSeconds <= 10 * 60,
+    isCritical: remainingSeconds <= 60,
     offsetRef,
   };
 }

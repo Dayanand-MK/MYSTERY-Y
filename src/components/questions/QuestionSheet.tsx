@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { AnswerDraft } from '../../hooks/useAutoSave';
-import { HelpCircle, CheckSquare, Square, CheckCircle, Circle, Hash, Clock, FileText } from 'lucide-react';
+import { CheckSquare, Square, CheckCircle, Circle, Hash, Clock, FileText } from 'lucide-react';
 
 interface Option {
   id: string;
@@ -24,6 +24,7 @@ interface QuestionSheetProps {
   answers: AnswerDraft[];
   onAnswerChange: (questionId: string, answerText: string, selectedOptions: string[]) => void;
   activeQuestionIndex: number;
+  disabled?: boolean;
 }
 
 // Simple deterministic shuffle using a seed string (team_id) to give each team a stable, unique ordering
@@ -50,7 +51,8 @@ export default function QuestionSheet({
   options,
   answers,
   onAnswerChange,
-  activeQuestionIndex
+  activeQuestionIndex,
+  disabled = false
 }: QuestionSheetProps) {
   const activeQuestion = questions[activeQuestionIndex];
 
@@ -83,6 +85,7 @@ export default function QuestionSheet({
   };
 
   const handleOptionToggle = (optionId: string, isSingle: boolean) => {
+    if (disabled) return;
     let nextOptions: string[] = [];
     if (isSingle) {
       nextOptions = [optionId];
@@ -116,6 +119,11 @@ export default function QuestionSheet({
         </div>
       </div>
 
+      <div className="mb-4 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-detective-crimson">
+        <FileText className="w-3.5 h-3.5" />
+        {activeQuestion.type === 'evidence_selection' ? 'Evidence Board' : activeQuestion.type === 'number' ? 'Forensic Record' : activeQuestion.type === 'time' ? 'Chronology Record' : activeQuestion.type === 'long_answer' ? 'Final Investigative POV' : activeQuestion.type === 'multiple_choice' ? 'Evidence Selection' : activeQuestion.type === 'single_choice' ? 'Case Decision' : 'Investigator Notes'}
+      </div>
+
       {/* Render based on Question Type */}
       <div className="flex-grow overflow-y-auto space-y-6 pr-2 pb-20">
         {/* 1. SINGLE CHOICE */}
@@ -127,6 +135,7 @@ export default function QuestionSheet({
                 <button
                   key={opt.id}
                   onClick={() => handleOptionToggle(opt.id, true)}
+                  disabled={disabled}
                   className={`w-full flex items-center gap-3 p-4 rounded border text-left transition-all duration-150 ${
                     isSelected
                       ? 'border-detective-crimson bg-detective-crimson/5 font-bold shadow-[inset_0_0_10px_rgba(139,0,0,0.05)]'
@@ -154,6 +163,7 @@ export default function QuestionSheet({
                 <button
                   key={opt.id}
                   onClick={() => handleOptionToggle(opt.id, false)}
+                  disabled={disabled}
                   className={`w-full flex items-center gap-3 p-4 rounded border text-left transition-all duration-150 ${
                     isSelected
                       ? 'border-detective-crimson bg-detective-crimson/5 font-bold shadow-[inset_0_0_10px_rgba(139,0,0,0.05)]'
@@ -181,6 +191,7 @@ export default function QuestionSheet({
                 <button
                   key={opt.id}
                   onClick={() => handleOptionToggle(opt.id, false)}
+                  disabled={disabled}
                   className={`relative flex flex-col p-4 rounded border text-left transition-all duration-200 ${
                     isSelected
                       ? 'border-detective-crimson bg-detective-crimson/5 shadow-[0_4px_12px_rgba(139,0,0,0.1)]'
@@ -214,6 +225,7 @@ export default function QuestionSheet({
                 type="number"
                 value={currentDraft.answer_text}
                 onChange={handleTextChange}
+                disabled={disabled}
                 placeholder="Enter value"
                 className="w-full bg-transparent border-none outline-none focus:ring-0 text-md font-bold"
               />
@@ -231,6 +243,7 @@ export default function QuestionSheet({
                 type="text"
                 value={currentDraft.answer_text}
                 onChange={handleTextChange}
+                disabled={disabled}
                 placeholder="HH:MM:SS"
                 className="w-full bg-transparent border-none outline-none focus:ring-0 text-md font-bold uppercase"
               />
@@ -246,6 +259,7 @@ export default function QuestionSheet({
               type="text"
               value={currentDraft.answer_text}
               onChange={handleTextChange}
+              disabled={disabled}
               placeholder="State motive, alibi, or suspect connection..."
               className="w-full dossier-input py-2 text-md"
             />
@@ -259,6 +273,7 @@ export default function QuestionSheet({
             <textarea
               value={currentDraft.answer_text}
               onChange={handleTextChange}
+              disabled={disabled}
               rows={8}
               placeholder="Deduce case timeline discrepancies, alibi falsifications, or forensic findings. Detail your logical POV..."
               className="w-full flex-grow p-4 bg-black/5 border border-black/10 rounded focus:outline-none focus:border-detective-crimson focus:ring-1 focus:ring-detective-crimson text-sm leading-relaxed"

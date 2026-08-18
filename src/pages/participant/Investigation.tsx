@@ -8,6 +8,9 @@ import { supabase } from '../../lib/supabase';
 import QuestionSheet from '../../components/questions/QuestionSheet';
 import SecurityWarning from '../../components/security/SecurityWarning';
 import CaseBriefing from '../../components/evidence/CaseBriefing';
+import InvestigationNotes from '../../components/investigation/InvestigationNotes';
+import InvestigationProgress from '../../components/investigation/InvestigationProgress';
+import EvidenceLocker from '../../components/investigation/EvidenceLocker';
 import {
   Clock,
   ShieldAlert,
@@ -22,6 +25,10 @@ import {
   Lock,
   ShieldCheck,
   Ban,
+  Menu,
+  X,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,6 +93,7 @@ export default function Investigation() {
   });
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isCaseDrawerOpen, setIsCaseDrawerOpen] = useState(false);
 
   // Prevent stale async responses
   const initGen = useRef(0);
@@ -100,10 +108,12 @@ export default function Investigation() {
   const requestAppFullscreen = useCallback(async () => {
     try {
       if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen().catch(() => {});
+        await document.documentElement.requestFullscreen();
       }
+      return Boolean(document.fullscreenElement);
     } catch (err) {
       console.warn('[MYSTERY-Y][INVESTIGATION] Fullscreen request error:', err);
+      return false;
     }
   }, []);
 
@@ -243,9 +253,6 @@ export default function Investigation() {
       console.debug('[MYSTERY-Y][INVESTIGATION] Workspace ready ✓');
       setPhase('ready');
 
-      // Attempt fullscreen on workspace ready if permitted
-      requestAppFullscreen();
-
     } catch (err: any) {
       if (gen !== initGen.current) return;
       clearTimeout(timeoutId);
@@ -263,15 +270,8 @@ export default function Investigation() {
   }, [isParticipantLoading, initialize]);
 
   // ── Autosave (only active when workspace is ready and not locked) ───────────
-  const { drafts, updateAnswer, syncStatus, syncError } = useAutoSave(
+  const { drafts, updateAnswer, syncStatus, syncError, isOnline, lastSavedAt } = useAutoSave(
     phase === 'ready' ? currentTeam?.id : undefined
-  );
-
-  // ── Timer — authoritative source: submission.started_at → session fallback ─
-  const timerStartedAt = submission?.started_at ?? currentSession?.started_at;
-  const { formattedTime } = useInvestigationTimer(
-    phase === 'ready' || phase === 'locked' ? timerStartedAt : undefined,
-    caseData?.duration_limit ?? 60
   );
 
   // ── Security monitor — unified 3-strike monitoring ─────────────────────────
@@ -293,10 +293,19 @@ export default function Investigation() {
     phase === 'ready'
   );
 
+  // ── Timer — authoritative source: submission.started_at → session fallback ─
+  const timerStartedAt = submission?.started_at ?? currentSession?.started_at;
+  const isSecurityPaused = Boolean(activeWarning && lastEvent.toUpperCase().includes('FULLSCREEN'));
+  const { formattedRemaining, isWarning: isTimerWarning, isCritical: isTimerCritical } = useInvestigationTimer(
+    phase === 'ready' || phase === 'locked' ? timerStartedAt : undefined,
+    caseData?.duration_limit ?? 60,
+    isSecurityPaused
+  );
+
   // Handle return to fullscreen from warning overlay
   const handleReturnFullscreen = async () => {
-    await requestAppFullscreen();
-    dismissWarning();
+    const restored = await requestAppFullscreen();
+    if (restored) dismissWarning();
   };
 
   // ── Render: Loading ────────────────────────────────────────────────────────
@@ -382,7 +391,7 @@ export default function Investigation() {
   }).length;
 
   return (
-    <div className="h-screen flex flex-col bg-detective-dark font-mono select-none overflow-hidden">
+    <div className="h-[100dvh] flex flex-col bg-detective-dark font-mono overflow-hidden">
 
       {/* Security overlay for every incident or 3/3 lock */}
       {(activeWarning || isCurrentlyLocked) && (
@@ -410,6 +419,10 @@ export default function Investigation() {
           <span className="font-bold text-detective-crimson uppercase tracking-wider text-xs sm:text-sm select-none flex-shrink-0">
             🔎 MYSTERY Y
           </span>
+
+          <button onClick={() => setIsCaseDrawerOpen(true)} className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center border border-detective-border text-detective-muted hover:text-white" aria-label="Open case file">
+            <Menu className="w-5 h-5" />
+          </button>
 
           <div className="hidden sm:flex items-center gap-1.5 text-xs bg-black/30 border border-detective-border rounded px-2 py-1 flex-shrink-0">
             <span className="text-detective-muted">CASE:</span>
@@ -465,7 +478,7 @@ export default function Investigation() {
             )}
             {syncStatus === 'saved' && (
               <span className="text-detective-green flex items-center gap-1 text-[10px]">
-                <CheckCircle className="w-3 h-3" /> ✓ Saved
+                <CheckCircle className="w-3 h-3" /> Saved {lastSavedAt || ''}
               </span>
             )}
             {syncStatus === 'error' && (
@@ -476,19 +489,49 @@ export default function Investigation() {
             )}
           </div>
 
-          {/* Elapsed timer */}
-          <div className="flex items-center gap-1.5 text-white bg-black/40 border border-detective-border px-2.5 py-1 rounded font-mono text-xs sm:text-sm tracking-wider font-bold">
-            <Clock className="w-3.5 h-3.5 text-detective-crimson animate-pulse" />
-            <span>{formattedTime}</span>
+          <div className={`hidden sm:flex items-center gap-1 text-[10px] font-bold ${isOnline ? 'text-detective-green' : 'text-detective-alert'}`}>
+            {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}{isOnline ? 'ONLINE' : 'OFFLINE'}
+          </div>
+
+          <div className={`flex items-center gap-1.5 text-white bg-black/40 border px-2.5 py-1 rounded font-mono text-xs sm:text-sm tracking-wider font-bold ${isTimerCritical ? 'border-detective-crimson text-detective-alert animate-pulse' : isTimerWarning ? 'border-detective-amber text-detective-amber' : 'border-detective-border'}`}>
+            <Clock className="w-3.5 h-3.5" />
+            <span>{formattedRemaining}</span><span className="hidden sm:inline text-[9px]">REMAINING</span>
           </div>
         </div>
       </header>
+
+      {isCaseDrawerOpen && (
+        <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Case file">
+          <button className="absolute inset-0 bg-black/70" aria-label="Close case file" onClick={() => setIsCaseDrawerOpen(false)} />
+          <aside className="relative h-full w-[min(86vw,360px)] bg-detective-panel border-r border-detective-border shadow-2xl flex flex-col">
+            <div className="p-4 flex items-center justify-between border-b border-detective-border">
+              <div><div className="text-[10px] text-detective-crimson font-bold tracking-widest">MYSTERY Y</div><h2 className="text-sm font-bold text-white uppercase">Case File</h2></div>
+              <button className="min-h-11 min-w-11 inline-flex items-center justify-center text-detective-muted hover:text-white" onClick={() => setIsCaseDrawerOpen(false)} aria-label="Close case file"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-3 grid grid-cols-2 gap-2 border-b border-detective-border">
+              <button onClick={() => { switchTab('brief'); setIsCaseDrawerOpen(false); }} className={`min-h-11 border text-[10px] font-bold uppercase ${activeTab === 'brief' ? 'border-detective-crimson bg-detective-crimson text-white' : 'border-detective-border text-detective-muted'}`}>Briefing</button>
+              <button disabled={isCurrentlyLocked || isSecurityPaused} onClick={() => { switchTab('questions'); setIsCaseDrawerOpen(false); }} className={`min-h-11 border text-[10px] font-bold uppercase ${activeTab === 'questions' ? 'border-detective-crimson bg-detective-crimson text-white' : 'border-detective-border text-detective-muted'} disabled:opacity-40`}>Inquiry</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <InvestigationProgress answered={answeredCount} total={questions.length} />
+              <div className="pt-2 text-[10px] text-detective-muted font-bold uppercase tracking-wider">Question files</div>
+              {questions.map((q, idx) => {
+                const draft = drafts.find((d) => d.question_id === q.id);
+                const complete = draft && (['single_choice', 'multiple_choice', 'evidence_selection'].includes(q.type) ? draft.selected_options.length > 0 : draft.answer_text.trim().length > 0);
+                return <button key={q.id} disabled={isCurrentlyLocked || isSecurityPaused} onClick={() => { switchTab('questions'); setActiveQuestionIdx(idx); setIsCaseDrawerOpen(false); }} className={`min-h-11 w-full flex items-center justify-between px-3 border text-left text-xs ${idx === activeQuestionIdx && activeTab === 'questions' ? 'border-detective-crimson text-white bg-detective-crimson/10' : 'border-detective-border text-detective-muted'} disabled:opacity-40`}><span>Q{q.sort_order}</span><span aria-label={complete ? 'Answered' : 'Unanswered'} className={complete ? 'text-detective-green' : 'text-detective-muted'}>{complete ? '✓' : '○'}</span></button>;
+              })}
+              <EvidenceLocker caseNumber={caseData!.case_number} briefingTitle={caseData!.briefing_title} />
+              <InvestigationNotes teamId={currentTeam!.id} sessionId={currentSession!.id} disabled={isCurrentlyLocked || isSecurityPaused} />
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* ── Main Workspace ───────────────────────────────────────────────── */}
       <div className="flex-grow flex flex-col md:flex-row overflow-hidden relative">
 
         {/* Left nav pane */}
-        <div className="w-full md:w-64 bg-detective-panel border-b md:border-b-0 md:border-r border-detective-border flex flex-col flex-shrink-0">
+        <div className="hidden md:flex w-64 bg-detective-panel border-r border-detective-border flex-col flex-shrink-0">
 
           {/* Tab selector */}
           <div className="p-3 border-b border-detective-border grid grid-cols-2 gap-1 bg-black/10">
@@ -537,7 +580,7 @@ export default function Investigation() {
                     { label: 'TEAM', value: currentTeam!.name, cls: 'text-white truncate' },
                     { label: 'ID', value: currentTeam!.team_id_label, cls: 'text-detective-amber font-mono' },
                     { label: 'STATUS', value: isCurrentlyLocked ? 'SESSION LOCKED' : 'ACTIVE INVESTIGATION', cls: isCurrentlyLocked ? 'text-detective-crimson animate-pulse' : 'text-detective-green' },
-                    { label: 'ELAPSED', value: formattedTime, cls: 'text-detective-amber font-mono' },
+                    { label: 'REMAINING', value: formattedRemaining, cls: 'text-detective-amber font-mono' },
                     { label: 'SECURITY', value: `${violations} / 3`, cls: violations >= 3 ? 'text-detective-crimson' : violations > 0 ? 'text-detective-amber' : 'text-detective-green' },
                   ].map((row) => (
                     <div key={row.label} className="flex justify-between items-center px-2 py-1.5">
@@ -550,6 +593,9 @@ export default function Investigation() {
                 <div className="bg-black/20 border border-detective-border/40 rounded p-2.5 text-detective-muted leading-relaxed text-[10px]">
                   Review the physical case file and briefing materials carefully. All answers autosave.
                 </div>
+                <InvestigationProgress answered={answeredCount} total={questions.length} />
+                <EvidenceLocker caseNumber={caseData!.case_number} briefingTitle={caseData!.briefing_title} />
+                <InvestigationNotes teamId={currentTeam!.id} sessionId={currentSession!.id} disabled={isCurrentlyLocked || isSecurityPaused} />
               </div>
             )}
 
@@ -651,13 +697,14 @@ export default function Investigation() {
                   updateAnswer(qId, text, selected, !!isChoice);
                 }}
                 activeQuestionIndex={activeQuestionIdx}
+                disabled={isCurrentlyLocked || isSecurityPaused}
               />
 
               {/* Prev / Next / Submit bar */}
               <div className="absolute bottom-0 left-0 w-full h-14 bg-white border-t border-black/10 px-4 sm:px-8 flex justify-between items-center z-10">
                 <button
                   id="btn-prev-q"
-                  disabled={activeQuestionIdx === 0 || isCurrentlyLocked}
+                  disabled={activeQuestionIdx === 0 || isCurrentlyLocked || isSecurityPaused}
                   onClick={() => setActiveQuestionIdx((p) => p - 1)}
                   className="px-3 sm:px-4 py-1.5 rounded border border-black/20 text-xs font-bold text-black/60 hover:bg-black/5 disabled:opacity-30 transition-colors cursor-pointer"
                 >
@@ -671,7 +718,7 @@ export default function Investigation() {
                 {activeQuestionIdx < questions.length - 1 ? (
                   <button
                     id="btn-next-q"
-                    disabled={isCurrentlyLocked}
+                    disabled={isCurrentlyLocked || isSecurityPaused}
                     onClick={() => setActiveQuestionIdx((p) => p + 1)}
                     className="px-3 sm:px-4 py-1.5 rounded bg-detective-dark hover:bg-detective-crimson text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-30"
                   >
@@ -680,7 +727,7 @@ export default function Investigation() {
                 ) : (
                   <button
                     id="btn-review-submit"
-                    disabled={isCurrentlyLocked}
+                    disabled={isCurrentlyLocked || isSecurityPaused}
                     onClick={() => navigate('/review')}
                     className="px-3 sm:px-5 py-2 rounded bg-detective-crimson hover:bg-detective-alert text-white text-xs font-bold uppercase tracking-wider transition-all shadow-[0_0_12px_rgba(211,47,47,0.3)] disabled:opacity-40 cursor-pointer"
                   >

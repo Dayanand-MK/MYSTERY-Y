@@ -14,6 +14,7 @@ export default function Review() {
   const [options, setOptions] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   // Sync draft answers
   const { drafts, clearLocalDrafts } = useAutoSave(currentTeam?.id);
@@ -229,7 +230,7 @@ export default function Review() {
           </button>
 
           <button
-            onClick={handleSubmit}
+            onClick={() => setIsConfirming(true)}
             disabled={isSubmitting}
             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-detective-crimson hover:bg-detective-alert text-white py-3 px-8 rounded font-mono uppercase tracking-wider font-bold transition-all duration-300 shadow-[0_0_15px_rgba(139,0,0,0.3)] disabled:opacity-50"
           >
@@ -246,6 +247,20 @@ export default function Review() {
         </div>
 
       </div>
+
+      {isConfirming && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-mono">
+          <div className="max-w-md w-full bg-detective-panel border border-detective-crimson shadow-2xl p-6">
+            <div className="text-[10px] text-detective-crimson font-bold tracking-widest uppercase">Final confirmation</div>
+            <h2 className="mt-2 text-lg text-white font-bold uppercase">Submit this investigation?</h2>
+            <p className="mt-3 text-xs text-stone-300 leading-relaxed">Once submitted, your answers cannot be changed. Your final score remains classified.</p>
+            <div className="mt-5 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+              <button disabled={isSubmitting} onClick={() => setIsConfirming(false)} className="min-h-11 px-4 border border-detective-border text-detective-muted text-xs font-bold uppercase">Cancel</button>
+              <button disabled={isSubmitting} onClick={handleSubmit} className="min-h-11 px-4 bg-detective-crimson text-white text-xs font-bold uppercase disabled:opacity-50">{isSubmitting ? 'Submitting...' : 'Submit Final'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -70,7 +70,7 @@ export default function SecurityWarning({
 
         {/* Header Title */}
         <h1 className="text-lg sm:text-xl font-bold uppercase tracking-wider text-white mb-1.5">
-          {type === 'block' ? 'SECURITY REVIEW REQUIRED' : 'SECURITY WARNING'}
+          {type === 'block' ? 'SECURITY REVIEW REQUIRED' : isFullscreenExit ? 'SECURITY INTERRUPTION' : 'SECURITY WARNING'}
         </h1>
         
         <div className="text-xs font-bold text-detective-alert uppercase tracking-widest mb-4 flex items-center justify-center gap-1.5">
@@ -83,7 +83,7 @@ export default function SecurityWarning({
           <p className="text-[11px] uppercase text-detective-muted">
             {type === 'block'
               ? 'Security violation limit reached. Your investigation session has been locked. Please wait for an event administrator to review your session.'
-              : 'Investigation session integrity protocol triggered.'}
+              : isFullscreenExit ? 'Fullscreen mode was exited. Your investigation has been temporarily paused.' : 'Investigation session integrity protocol triggered.'}
           </p>
 
           <div className="bg-black/70 border border-detective-crimson/40 px-3 py-2.5 rounded text-xs font-bold text-detective-alert uppercase tracking-wider">
@@ -96,7 +96,7 @@ export default function SecurityWarning({
 
           {fullscreenFailed && (
             <div className="bg-detective-crimson/15 border border-detective-crimson text-detective-alert p-2.5 rounded text-xs font-bold uppercase">
-              ⚠ Fullscreen Required: Please enable fullscreen to continue the investigation.
+              ⚠ Fullscreen could not be restored. Please try again.
             </div>
           )}
 
@@ -131,11 +131,11 @@ export default function SecurityWarning({
             ) : isFullscreenExit ? (
               fullscreenFailed ? (
                 <>
-                  <Maximize2 className="w-4 h-4" /> [ TRY AGAIN ]
+                  <Maximize2 className="w-4 h-4" /> [ RETRY FULLSCREEN ]
                 </>
               ) : (
                 <>
-                  <Maximize2 className="w-4 h-4" /> [ RETURN TO FULLSCREEN ]
+                  <Maximize2 className="w-4 h-4" /> [ RETURN TO INVESTIGATION ]
                 </>
               )
             ) : (

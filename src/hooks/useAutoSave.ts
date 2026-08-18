@@ -14,6 +14,8 @@ export function useAutoSave(
   const [drafts, setDrafts] = useState<AnswerDraft[]>(initialDrafts);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingUpdatesRef = useRef<AnswerDraft[]>([]);
@@ -76,6 +78,12 @@ export function useAutoSave(
   // Performs the actual network save operation (upserts to database atomically)
   const saveToServer = async (updatedDrafts: AnswerDraft[]) => {
     if (!teamId || updatedDrafts.length === 0) return;
+    if (!navigator.onLine) {
+      setIsOnline(false);
+      setSyncStatus('error');
+      setSyncError('Offline — stored locally');
+      return;
+    }
     setSyncStatus('saving');
 
     try {
@@ -97,6 +105,7 @@ export function useAutoSave(
 
       setSyncStatus('saved');
       setSyncError(null);
+      setLastSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch (err: any) {
       console.error('AutoSave failed', err);
       setSyncStatus('error');
@@ -108,6 +117,24 @@ export function useAutoSave(
       }, 4000);
     }
   };
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (pendingUpdatesRef.current.length) void saveToServer(pendingUpdatesRef.current);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setSyncStatus('error');
+      setSyncError('Offline — stored locally');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [teamId]);
 
   const updateAnswer = (
     questionId: string,
@@ -180,6 +207,8 @@ export function useAutoSave(
     getAnswer,
     syncStatus,
     syncError,
+    isOnline,
+    lastSavedAt,
     clearLocalDrafts,
     refetchDrafts: fetchAuthoritativeDrafts,
   };
