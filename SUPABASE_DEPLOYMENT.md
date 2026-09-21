@@ -1,4 +1,4 @@
-﻿# MYSTERY Y — Production Supabase Deployment & Setup Guide
+# MYSTERY Y — Production Supabase Deployment & Setup Guide
 
 This document provides step-by-step instructions to connect, configure, deploy, and verify the **MYSTERY Y Investigation Platform** with your live Supabase backend.
 
@@ -58,33 +58,21 @@ The permanent Super Admin account must be created in **Supabase Auth**:
 
 ---
 
-## 4. Deploying the `create-admin` Edge Function
+## 4. Operator Management & Password Assignment (Coordinators & Evaluators)
 
-To enable secure administrator creation from the Super Admin dashboard without exposing `service_role` keys:
+To allow the Super Admin to create coordinators and evaluators, assign passwords directly in the portal, and manage credentials in Supabase:
 
-### Prerequisites
-Install the Supabase CLI:
+1. Open **Supabase Dashboard** → **SQL Editor**.
+2. Run the script [`20260921_admin_operator_management.sql`](supabase/migrations/20260921_admin_operator_management.sql).
+3. This creates:
+   - `create_operator_account(p_email, p_password, p_role, p_name)`: Secure server-side bcrypt password hashing, direct creation in `auth.users`, email auto-confirmation, and profile registration.
+   - `update_operator_password(p_user_id, p_new_password)`: Super Admin can reset or assign new passwords at any time.
+   - `delete_operator_account(p_user_id)`: Revokes operator access and cleans up accounts.
+
+*(Optional Alternative)* If you prefer using Edge Functions instead of PostgreSQL RPCs, deploy `create-admin` with Supabase CLI:
 ```bash
-npm install -g supabase
+supabase functions deploy create-admin
 ```
-
-### Deployment Steps
-1. Log in to Supabase CLI:
-   ```bash
-   supabase login
-   ```
-2. Link your project:
-   ```bash
-   supabase link --project-ref fsukaclvjbnfjfdrygku
-   ```
-3. Set the service role secret for the Edge Function:
-   ```bash
-   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
-   ```
-4. Deploy the function:
-   ```bash
-   supabase functions deploy create-admin
-   ```
 
 ---
 

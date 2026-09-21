@@ -322,6 +322,11 @@ class MockSupabaseClient {
         } else if (email === 'coord@college.edu' && password === 'coord123') {
           isValidPassword = true;
         }
+
+        const simPasswords = JSON.parse(localStorage.getItem('mystery_y_sim_passwords') || '{}');
+        if (simPasswords[email.toLowerCase()] && simPasswords[email.toLowerCase()] === password) {
+          isValidPassword = true;
+        }
       }
 
       if (matched && isValidPassword) {
@@ -957,6 +962,86 @@ class MockSupabaseClient {
         db.clearParticipantData();
         return { data: { success: true, message: 'Participant investigation data cleared successfully.' }, error: null };
       }
+
+      if (functionName === 'create_operator_account') {
+        const { p_email, p_password, p_role, p_name } = args;
+        const emailClean = (p_email || '').trim().toLowerCase();
+        const roleClean = (p_role || '').trim().toLowerCase();
+        const nameClean = (p_name || '').trim();
+
+        if (!emailClean) return { data: { success: false, error: 'Email is required' }, error: null };
+        if (!p_password || p_password.length < 6) return { data: { success: false, error: 'Password must be at least 6 characters' }, error: null };
+        if (!['evaluator', 'coordinator'].includes(roleClean)) return { data: { success: false, error: 'Role must be evaluator or coordinator' }, error: null };
+
+        const profiles = db.query<any>('profiles');
+        let existing = profiles.find((p: any) => p.email.toLowerCase() === emailClean);
+        let operatorId = existing?.id || crypto.randomUUID();
+
+        if (existing) {
+          const updated = profiles.map((p: any) => p.id === existing.id ? { ...p, role: roleClean, name: nameClean, status: 'active' } : p);
+          db.save('profiles', updated);
+        } else {
+          const newProfile = {
+            id: operatorId,
+            email: emailClean,
+            role: roleClean,
+            name: nameClean,
+            status: 'active',
+            created_at: new Date().toISOString()
+          };
+          db.save('profiles', [...profiles, newProfile]);
+        }
+
+        const simPasswords = JSON.parse(localStorage.getItem('mystery_y_sim_passwords') || '{}');
+        simPasswords[emailClean] = p_password;
+        localStorage.setItem('mystery_y_sim_passwords', JSON.stringify(simPasswords));
+
+        return {
+          data: {
+            success: true,
+            message: 'Operator created successfully',
+            user_id: operatorId,
+            email: emailClean,
+            role: roleClean,
+            name: nameClean
+          },
+          error: null
+        };
+      }
+
+      if (functionName === 'update_operator_password') {
+        const { p_user_id, p_new_password } = args;
+        if (!p_new_password || p_new_password.length < 6) {
+          return { data: { success: false, error: 'Password must be at least 6 characters' }, error: null };
+        }
+        const profiles = db.query<any>('profiles');
+        const target = profiles.find((p: any) => p.id === p_user_id);
+        if (!target) {
+          return { data: { success: false, error: 'Operator profile not found' }, error: null };
+        }
+        const simPasswords = JSON.parse(localStorage.getItem('mystery_y_sim_passwords') || '{}');
+        simPasswords[target.email.toLowerCase()] = p_new_password;
+        localStorage.setItem('mystery_y_sim_passwords', JSON.stringify(simPasswords));
+
+        return { data: { success: true, message: 'Password updated successfully', email: target.email }, error: null };
+      }
+
+      if (functionName === 'delete_operator_account') {
+        const { p_user_id } = args;
+        const profiles = db.query<any>('profiles');
+        const target = profiles.find((p: any) => p.id === p_user_id);
+        if (target && target.email === 'vh13155_ml23@velhightech.com') {
+          return { data: { success: false, error: 'Super Admin account cannot be deleted' }, error: null };
+        }
+        db.save('profiles', profiles.filter((p: any) => p.id !== p_user_id));
+        if (target) {
+          const simPasswords = JSON.parse(localStorage.getItem('mystery_y_sim_passwords') || '{}');
+          delete simPasswords[target.email.toLowerCase()];
+          localStorage.setItem('mystery_y_sim_passwords', JSON.stringify(simPasswords));
+        }
+        return { data: { success: true, message: 'Operator deleted successfully' }, error: null };
+      }
+
 
       return { data: null, error: { message: `Function ${functionName} not implemented in simulator.` } };
     } catch (e: any) {
