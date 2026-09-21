@@ -194,7 +194,7 @@ class LocalDB {
       // 8. Event Settings
       const settings = [
         { key: 'event_status', value: 'OPEN', updated_at: new Date().toISOString() },
-        { key: 'max_team_size', value: '3', updated_at: new Date().toISOString() },
+        { key: 'max_team_size', value: '4', updated_at: new Date().toISOString() },
         { key: 'violation_threshold', value: '3', updated_at: new Date().toISOString() }
       ];
       this.setStorage('event_settings', settings);
@@ -526,8 +526,8 @@ class MockSupabaseClient {
           return { data: { success: false, error: 'TEAM NAME ALREADY REGISTERED' }, error: null };
         }
 
-        if (!p_member_names || p_member_names.length < 2 || p_member_names.length > 3) {
-          return { data: { success: false, error: 'TEAM SIZE MUST BE 2 OR 3 MEMBERS' }, error: null };
+        if (!p_member_names || p_member_names.length < 2 || p_member_names.length > 4) {
+          return { data: { success: false, error: 'TEAM SIZE MUST BE 2 TO 4 MEMBERS' }, error: null };
         }
 
         // Auto team labeling

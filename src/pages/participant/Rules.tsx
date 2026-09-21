@@ -6,7 +6,7 @@ export default function Rules() {
   const navigate = useNavigate();
 
   const protocols = [
-    "Each team consists of 2–3 members. Solo attempts are strictly prohibited.",
+    "Each team consists of 2–4 members. Solo attempts are strictly prohibited.",
     "Use only physical case file folder contents and digital evidence dashboard. External searching is monitored.",
     "Do not communicate clues, answers, or passwords with other teams.",
     "Investigation timer starts exactly when 'BEGIN INVESTIGATION' is pressed.",

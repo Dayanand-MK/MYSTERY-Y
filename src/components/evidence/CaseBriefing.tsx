@@ -21,7 +21,7 @@ interface CaseBriefingProps {
 export default function CaseBriefing({
   caseInfo,
   teamName,
-  teamSize = '2–3 MEMBERS',
+  teamSize = '2–4 MEMBERS',
   isBeforeStart,
   onBegin,
   isStarting = false

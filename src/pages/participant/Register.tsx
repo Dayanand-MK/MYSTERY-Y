@@ -14,6 +14,7 @@ export default function Register() {
   const [member1, setMember1] = useState('');
   const [member2, setMember2] = useState('');
   const [member3, setMember3] = useState('');
+  const [member4, setMember4] = useState('');
   const [accessCode, setAccessCode] = useState('');
 
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
@@ -70,6 +71,9 @@ export default function Register() {
     const members = [member1, member2];
     if (member3.trim()) {
       members.push(member3);
+    }
+    if (member4.trim()) {
+      members.push(member4);
     }
 
     const success = await registerTeam(
@@ -131,7 +135,7 @@ export default function Register() {
           {/* Members */}
           <div className="space-y-3 bg-black/5 p-4 rounded border border-black/5">
             <div className="flex items-center gap-2 text-xs uppercase text-stone-600 font-bold border-b border-black/10 pb-1 mb-2">
-              <Users className="w-3.5 h-3.5" /> Team Members (2 Min / 3 Max)
+              <Users className="w-3.5 h-3.5" /> Team Members (2 Min / 4 Max)
             </div>
             
             <div>
@@ -162,6 +166,16 @@ export default function Register() {
                 type="text"
                 value={member3}
                 onChange={(e) => setMember3(e.target.value)}
+                placeholder="Full Name"
+                className="w-full bg-transparent border-b border-detective-dark/20 py-1 focus:outline-none focus:border-detective-crimson uppercase placeholder:text-gray-400"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase text-stone-500 mb-0.5">Member 04 (Optional)</label>
+              <input
+                type="text"
+                value={member4}
+                onChange={(e) => setMember4(e.target.value)}
                 placeholder="Full Name"
                 className="w-full bg-transparent border-b border-detective-dark/20 py-1 focus:outline-none focus:border-detective-crimson uppercase placeholder:text-gray-400"
               />

@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS public.team_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('member_1', 'member_2', 'member_3')),
+    role TEXT NOT NULL CHECK (role IN ('member_1', 'member_2', 'member_3', 'member_4')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -358,9 +358,9 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'error', 'TEAM NAME ALREADY REGISTERED');
     END IF;
 
-    -- 2. Validate team size (2-3 members)
-    IF array_length(p_member_names, 1) < 2 OR array_length(p_member_names, 1) > 3 THEN
-        RETURN jsonb_build_object('success', false, 'error', 'TEAM SIZE MUST BE 2 OR 3 MEMBERS');
+    -- 2. Validate team size (2-4 members)
+    IF array_length(p_member_names, 1) < 2 OR array_length(p_member_names, 1) > 4 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'TEAM SIZE MUST BE 2 TO 4 MEMBERS');
     END IF;
 
     -- 3. Validate access code
@@ -935,7 +935,7 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO public.event_settings (key, value)
 VALUES
     ('event_status', 'OPEN'),
-    ('max_team_size', '3'),
+    ('max_team_size', '4'),
     ('violation_threshold', '3'),
     ('leaderboard_published', 'false'),
     ('ai_evaluation_enabled', 'true')
@@ -1023,7 +1023,7 @@ create table if not exists public.team_members (
     id uuid primary key default gen_random_uuid(),
     team_id uuid not null references public.teams(id) on delete cascade,
     name text not null,
-    role text not null check (role in ('member_1', 'member_2', 'member_3')),
+    role text not null check (role in ('member_1', 'member_2', 'member_3', 'member_4')),
     created_at timestamp with time zone default now()
 );
 
@@ -1207,9 +1207,9 @@ begin
         return jsonb_build_object('success', false, 'error', 'TEAM NAME ALREADY REGISTERED');
     end if;
 
-    -- 2. Validate team size constraints (2 to 3 members)
-    if array_length(p_member_names, 1) < 2 or array_length(p_member_names, 1) > 3 then
-        return jsonb_build_object('success', false, 'error', 'TEAM SIZE MUST BE 2 OR 3 MEMBERS');
+    -- 2. Validate team size constraints (2 to 4 members)
+    if array_length(p_member_names, 1) < 2 or array_length(p_member_names, 1) > 4 then
+        return jsonb_build_object('success', false, 'error', 'TEAM SIZE MUST BE 2 TO 4 MEMBERS');
     end if;
 
     -- 3. Validate access code status and case association

@@ -144,3 +144,5 @@ Before deploying this release, run [20260814_security_monitoring.sql](supabase/m
 Then run [20260814_admin_security_unlock.sql](supabase/migrations/20260814_admin_security_unlock.sql). It adds the authenticated, role-checked admin-only session-unlock RPC and participant Realtime updates.
 
 For the Cases management controls, also run [20260817_case_dossier_controls.sql](supabase/migrations/20260817_case_dossier_controls.sql). It protects unused-code deletion and permanent case deletion with server-side authorization and preserves participant history.
+
+For teams of 2–4 members, run [20260921_team_size_2_to_4.sql](supabase/migrations/20260921_team_size_2_to_4.sql) in the Supabase SQL Editor before deploying the updated registration form. It updates the registration size limit, permits the fourth member role, and sets `max_team_size` to `4`, preserving the rest of the deployed registration function.
