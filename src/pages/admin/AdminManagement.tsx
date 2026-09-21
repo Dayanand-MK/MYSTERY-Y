@@ -843,7 +843,7 @@ export default function AdminManagement() {
                 className="w-full bg-black/40 border border-detective-border rounded p-2 text-white focus:outline-none text-xs"
               >
                 <option value="evaluator">EVALUATOR (Grading & Scores Review + Security Audit)</option>
-                <option value="coordinator">COORDINATOR (Team Tracking & Security Center Management)</option>
+                <option value="coordinator">COORDINATOR (Teams, Cases, Submissions & Security Center)</option>
               </select>
             </div>
 
@@ -1011,8 +1011,8 @@ export default function AdminManagement() {
                 onChange={(e: any) => setEditRole(e.target.value)}
                 className="w-full bg-black/40 border border-detective-border rounded p-2 text-white focus:outline-none text-xs"
               >
-                <option value="evaluator">EVALUATOR (Grading & Scores review)</option>
-                <option value="coordinator">COORDINATOR (Security Center & Team tracking)</option>
+                <option value="evaluator">EVALUATOR (Grading & Scores Review + Security Audit)</option>
+                <option value="coordinator">COORDINATOR (Teams, Cases, Submissions & Security Center)</option>
               </select>
             </div>
 

@@ -118,7 +118,7 @@ export default function AdminLayout() {
   const navigationItems = [
     { name: 'Command Center', path: '/admin', icon: Terminal, roles: ['super_admin', 'evaluator', 'coordinator'] },
     { name: 'Teams', path: '/admin/teams', icon: Users, roles: ['super_admin', 'evaluator', 'coordinator'] },
-    { name: 'Cases', path: '/admin/cases', icon: Briefcase, roles: ['super_admin'] },
+    { name: 'Cases', path: '/admin/cases', icon: Briefcase, roles: ['super_admin', 'coordinator'] },
     { name: 'Submissions', path: '/admin/submissions', icon: FileSpreadsheet, roles: ['super_admin', 'evaluator', 'coordinator'] },
     { name: 'Scoring', path: '/admin/scoring', icon: CheckSquare, roles: ['super_admin', 'evaluator'] },
     { name: 'Security Center', path: '/admin/security', icon: ShieldAlert, roles: ['super_admin', 'evaluator', 'coordinator'] },
