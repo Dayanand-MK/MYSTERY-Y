@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { CheckSquare, Loader, ClipboardCheck, Edit, ShieldAlert, Award, ChevronRight, Tag, ShieldCheck } from 'lucide-react';
@@ -12,9 +12,11 @@ export default function Scoring() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [rubrics, setRubrics] = useState<any[]>([]);
   const [options, setOptions] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Active Grader Workspace state
+  const answerRequest = useRef(0);
   const [activeSub, setActiveSub] = useState<any>(null);
   const [answers, setAnswers] = useState<any[]>([]);
   const [activeAnswersLoading, setActiveAnswersLoading] = useState(false);
@@ -32,13 +34,20 @@ export default function Scoring() {
 
   const loadData = async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
-      const { data: sData } = await supabase.from('submissions').select('*').order('created_at', { ascending: false });
-      const { data: tData } = await supabase.from('teams').select('*');
-      const { data: cData } = await supabase.from('cases').select('*');
-      const { data: qData } = await supabase.from('questions').select('*');
-      const { data: rData } = await supabase.from('question_rubrics').select('*');
-      const { data: oData } = await supabase.from('question_options').select('id, question_id, option_text, is_correct');
+      const { data: sData, error: sError } = await supabase.from('submissions').select('*').order('created_at', { ascending: false });
+      if (sError) throw new Error(sError.message);
+      const { data: tData, error: tError } = await supabase.from('teams').select('*');
+      if (tError) throw new Error(tError.message);
+      const { data: cData, error: cError } = await supabase.from('cases').select('*');
+      if (cError) throw new Error(cError.message);
+      const { data: qData, error: qError } = await supabase.from('questions').select('*');
+      if (qError) throw new Error(qError.message);
+      const { data: rData, error: rError } = await supabase.from('question_rubrics').select('*');
+      if (rError) throw new Error(rError.message);
+      const { data: oData, error: oError } = await supabase.from('question_options').select('id, question_id, option_text, is_correct');
+      if (oError) throw new Error(oError.message);
 
       if (sData) setSubmissions(sData);
       if (tData) setTeams(tData);
@@ -48,22 +57,29 @@ export default function Scoring() {
       if (oData) setOptions(oData);
     } catch (err) {
       console.error('Failed to load grading logs', err);
+      setLoadError("Unable to load records. Check your connection and admin access, then reload.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleSelectSubmission = async (sub: any) => {
+    const request = ++answerRequest.current;
     setActiveAnswersLoading(true);
     setActiveSub(sub);
+    setAnswers([]);
+    setGradingScores({});
+    setGradingNotes({});
     setGradingError(null);
     setOverrideReason('');
 
     try {
-      const { data: aData } = await supabase
+      const { data: aData, error: aError } = await supabase
         .from('answers')
         .select('*')
         .eq('submission_id', sub.id);
+      if (request !== answerRequest.current) return;
+      if (aError) throw new Error(aError.message);
 
       if (aData) {
         setAnswers(aData);
@@ -81,8 +97,10 @@ export default function Scoring() {
       }
     } catch (err) {
       console.error('Answers load error', err);
+      if (request !== answerRequest.current) return;
+      setGradingError('Unable to load responses. Check admin access and reload.');
     } finally {
-      setActiveAnswersLoading(false);
+      if (request === answerRequest.current) setActiveAnswersLoading(false);
     }
   };
 
@@ -101,7 +119,7 @@ export default function Scoring() {
   };
 
   const handleSaveGrades = async () => {
-    if (!activeSub || !adminUser || !overrideReason.trim()) return;
+    if (!activeSub || !adminUser || !overrideReason.trim() || !answers.length || activeAnswersLoading) return;
     setIsGradingSaving(true);
     setGradingError(null);
 
@@ -122,12 +140,14 @@ export default function Scoring() {
           .eq('id', ans.id);
       });
 
-      await Promise.all(promises);
+      const results = await Promise.all(promises);
+      const failed = results.find((result) => result.error);
+      if (failed) throw new Error(failed.error.message);
 
       // 2. Recalculate Submissions total score
       const totalScore = Object.values(gradingScores).reduce((sum, s) => sum + s, 0);
       
-      await supabase
+      const { error: saveError } = await supabase
         .from('submissions')
         .update({
           score: totalScore,
@@ -136,9 +156,10 @@ export default function Scoring() {
           grading_notes: overrideReason.trim()
         })
         .eq('id', activeSub.id);
+      if (saveError) throw new Error(saveError.message);
 
       // 3. Log admin action
-      await supabase.from('admin_actions').insert({
+      const { error: auditError } = await supabase.from('admin_actions').insert({
         admin_id: adminUser.id,
         action_type: 'score_change',
         details: {
@@ -150,6 +171,7 @@ export default function Scoring() {
         }
       });
 
+      if (auditError) throw new Error(auditError.message);
       await loadData();
       setActiveSub(null);
     } catch (err: any) {
@@ -182,6 +204,7 @@ export default function Scoring() {
 
   return (
     <div className="space-y-6 font-mono text-sm">
+      {loadError && <p role="alert" className="text-detective-alert">{loadError}</p>}
       
       {/* Header */}
       <div className="flex justify-between items-center border-b border-detective-border pb-4">
@@ -206,7 +229,7 @@ export default function Scoring() {
               <div className="h-full flex items-center justify-center text-[10px] text-detective-muted uppercase">
                 Loading submissions...
               </div>
-            ) : submissions.length === 0 ? (
+            ) : loadError ? null : submissions.length === 0 ? (
               <div className="h-full flex items-center justify-center text-[10px] text-detective-muted uppercase">
                 No cases closed for evaluation yet.
               </div>
@@ -216,6 +239,7 @@ export default function Scoring() {
                 return (
                   <button
                     key={sub.id}
+                    disabled={isGradingSaving}
                     onClick={() => handleSelectSubmission(sub)}
                     className={`w-full flex items-center justify-between p-3 rounded border text-left text-xs transition-all ${
                       isActive
@@ -227,6 +251,7 @@ export default function Scoring() {
                       <div className="font-bold text-white uppercase truncate">{getTeamName(sub.team_id)}</div>
                       <div className="text-[10px] text-detective-crimson font-bold">{getTeamLabel(sub.team_id)}</div>
                       <div className="text-[9px] text-detective-muted truncate">{getCaseDetails(sub.case_id)}</div>
+                      <div className="text-[10px] text-white">{Number(sub.score).toFixed(2)} marks · {sub.is_finalized ? "Final" : "Provisional"}</div>
                     </div>
                     
                     <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border flex-shrink-0 uppercase ${
@@ -269,6 +294,7 @@ export default function Scoring() {
                 </div>
               </div>
 
+              <p className="text-xs text-detective-muted mb-3">Saved total: {Number(activeSub.score).toFixed(2)} marks. {answers.filter(a => !a.is_graded).length} responses awaiting evaluation. Written and numeric responses require manual grading.</p>
               {/* Answers editor scroll grid */}
               <div className="flex-grow overflow-y-auto space-y-6 pr-2 mb-4 scrollbar-thin">
                 
@@ -279,6 +305,7 @@ export default function Scoring() {
                   </div>
                 )}
 
+                {!answers.length && !gradingError && <p className="text-detective-amber">No responses were returned for this submission. Verify stored answers and admin access before grading.</p>}
                 {answers.map((ans, idx) => {
                   const q = questions.find((qst) => qst.id === ans.question_id);
                   if (!q) return null;
@@ -367,7 +394,7 @@ export default function Scoring() {
                       {/* Grade Inputs */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-detective-border/20">
                         <div>
-                          <label className="block text-[9px] uppercase text-detective-muted mb-1 font-bold">Grade Score</label>
+                          <label className="block text-[9px] uppercase text-detective-muted mb-1 font-bold">Grade Score {ans.is_graded ? `(saved: ${Number(ans.score).toFixed(2)})` : "— Pending evaluation"}</label>
                           {isMcq ? (
                             <div className="text-xs font-bold text-detective-green uppercase bg-detective-green/5 border border-detective-green/30 p-2 rounded flex items-center gap-1.5">
                               <ShieldCheck className="w-4 h-4" /> Auto Evaluated: {ans.score} Marks
@@ -430,7 +457,7 @@ export default function Scoring() {
                   </button>
                   <button
                     onClick={handleSaveGrades}
-                    disabled={isGradingSaving || !overrideReason.trim()}
+                    disabled={isGradingSaving || !overrideReason.trim() || !answers.length}
                     className="w-1/2 sm:w-auto px-6 py-2 bg-detective-crimson hover:bg-detective-alert text-white rounded font-bold uppercase tracking-wider text-xs disabled:opacity-50"
                   >
                     {isGradingSaving ? 'Locking Grades...' : 'Finalize Grades'}

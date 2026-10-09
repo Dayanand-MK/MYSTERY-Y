@@ -11,6 +11,8 @@ export function useAutoSave(
   teamId: string | null | undefined,
   initialDrafts: AnswerDraft[] = []
 ) {
+  const [isDraftsLoaded, setIsDraftsLoaded] = useState(false);
+  const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<AnswerDraft[]>(initialDrafts);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -24,6 +26,8 @@ export function useAutoSave(
   // Load authoritative draft answers from DB FIRST on mount
   const fetchAuthoritativeDrafts = useCallback(async () => {
     if (!teamId) return;
+    setIsDraftsLoaded(false);
+    setDraftLoadError(null);
 
     try {
       // 1. Query Supabase for authoritative draft answers
@@ -32,6 +36,7 @@ export function useAutoSave(
         .select('question_id, answer_text, selected_options')
         .eq('team_id', teamId);
 
+      if (error) throw new Error(error.message);
       let serverDrafts: AnswerDraft[] = [];
       if (!error && data && data.length > 0) {
         serverDrafts = data.map((d: any) => ({
@@ -66,8 +71,10 @@ export function useAutoSave(
       pendingUpdatesRef.current = finalDrafts;
       localStorage.setItem(`mystery_y_drafts_${teamId}`, JSON.stringify(finalDrafts));
       isLoadedRef.current = true;
+      setIsDraftsLoaded(true);
     } catch (err) {
       console.error('Failed to sync drafts from database', err);
+      setDraftLoadError('Could not load saved responses. Reload before submitting.');
     }
   }, [teamId]);
 
@@ -203,6 +210,8 @@ export function useAutoSave(
 
   return {
     drafts,
+    isDraftsLoaded,
+    draftLoadError,
     updateAnswer,
     getAnswer,
     syncStatus,

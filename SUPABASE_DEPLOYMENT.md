@@ -134,3 +134,9 @@ Then run [20260814_admin_security_unlock.sql](supabase/migrations/20260814_admin
 For the Cases management controls, also run [20260817_case_dossier_controls.sql](supabase/migrations/20260817_case_dossier_controls.sql). It protects unused-code deletion and permanent case deletion with server-side authorization and preserves participant history.
 
 For teams of 2–4 members, run [20260921_team_size_2_to_4.sql](supabase/migrations/20260921_team_size_2_to_4.sql) in the Supabase SQL Editor before deploying the updated registration form. It updates the registration size limit, permits the fourth member role, and sets `max_team_size` to `4`, preserving the rest of the deployed registration function.
+
+## Submission and response loading fix (2026-10-09)
+
+Run [20261009_submission_payload_guard.sql](supabase/migrations/20261009_submission_payload_guard.sql) before deploying the frontend. It preserves the deployed submission function and rejects empty, duplicate, foreign-case, or incomplete question payloads before any writes.
+
+For existing zero-score dossiers, run [diagnose_submission_answers.sql](supabase/diagnose_submission_answers.sql) in SQL Editor. If answer_count is positive but the admin UI is empty, inspect admin access/RLS. If answer_count is zero and saved_draft_count is positive, drafts may support recovery after review; this release does not rewrite historical submissions or grades. If both counts are zero, check the original participant browser cache/backups. Text and numeric answers require manual grading.

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Search, FileSpreadsheet, Clock, ShieldCheck, Loader, ShieldAlert, Award, FileText, ChevronRight, Eye } from 'lucide-react';
 
@@ -10,11 +10,14 @@ export default function Submissions() {
   const [options, setOptions] = useState<any[]>([]);
   
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Detail Modal state
+  const detailRequest = useRef(0);
   const [selectedSub, setSelectedSub] = useState<any>(null);
   const [selectedSubAnswers, setSelectedSubAnswers] = useState<any[]>([]);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
 
   useEffect(() => {
@@ -23,12 +26,18 @@ export default function Submissions() {
 
   const loadData = async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
-      const { data: sData } = await supabase.from('submissions').select('*');
-      const { data: tData } = await supabase.from('teams').select('*');
-      const { data: cData } = await supabase.from('cases').select('*');
-      const { data: qData } = await supabase.from('questions').select('*');
-      const { data: oData } = await supabase.from('question_options').select('id, option_text, is_correct');
+      const { data: sData, error: sError } = await supabase.from('submissions').select('*');
+      if (sError) throw new Error(sError.message);
+      const { data: tData, error: tError } = await supabase.from('teams').select('*');
+      if (tError) throw new Error(tError.message);
+      const { data: cData, error: cError } = await supabase.from('cases').select('*');
+      if (cError) throw new Error(cError.message);
+      const { data: qData, error: qError } = await supabase.from('questions').select('*');
+      if (qError) throw new Error(qError.message);
+      const { data: oData, error: oError } = await supabase.from('question_options').select('id, option_text, is_correct');
+      if (oError) throw new Error(oError.message);
 
       if (sData) setSubmissions(sData);
       if (tData) setTeams(tData);
@@ -37,25 +46,33 @@ export default function Submissions() {
       if (oData) setOptions(oData);
     } catch (err) {
       console.error('Failed to load submissions', err);
+      setLoadError("Unable to load records. Check your connection and admin access, then reload.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleOpenDetail = async (sub: any) => {
+    const request = ++detailRequest.current;
     setIsDetailLoading(true);
     setSelectedSub(sub);
+    setSelectedSubAnswers([]);
+    setDetailError(null);
     try {
-      const { data: aData } = await supabase
+      const { data: aData, error: aError } = await supabase
         .from('answers')
         .select('*')
         .eq('submission_id', sub.id);
+      if (request !== detailRequest.current) return;
+      if (aError) throw new Error(aError.message);
 
       if (aData) setSelectedSubAnswers(aData);
     } catch (err) {
       console.error('Failed to load answers', err);
+      if (request !== detailRequest.current) return;
+      setDetailError('Unable to load responses. Check admin access and reload.');
     } finally {
-      setIsDetailLoading(false);
+      if (request === detailRequest.current) setIsDetailLoading(false);
     }
   };
 
@@ -97,13 +114,14 @@ export default function Submissions() {
 
   return (
     <div className="space-y-6 font-mono text-sm">
+      {loadError && <p role="alert" className="text-detective-alert">{loadError}</p>}
       
       {/* Header */}
       <div className="flex justify-between items-center border-b border-detective-border pb-4">
         <div>
           <h1 className="text-xl font-bold uppercase tracking-wider text-white">Investigation Submissions</h1>
           <p className="text-xs text-detective-muted uppercase tracking-widest mt-1">
-            Submitted Case Dossiers Archives
+            Saved team scores. Choice questions are automatic; written and numeric answers require grading.
           </p>
         </div>
       </div>
@@ -130,7 +148,7 @@ export default function Submissions() {
           <Loader className="w-6 h-6 animate-spin text-detective-crimson mr-2" />
           RETRIEVING AUDIT ARCHIVES...
         </div>
-      ) : filteredSubmissions.length === 0 ? (
+      ) : loadError ? null : filteredSubmissions.length === 0 ? (
         <div className="bg-detective-panel border border-detective-border rounded p-12 text-center text-detective-muted">
           NO CLOSED CASE DOSSIERS FILED YET.
         </div>
@@ -145,7 +163,7 @@ export default function Submissions() {
                 <th className="p-4">CASE FILE</th>
                 <th className="p-4">SUBMIT TIME</th>
                 <th className="p-4">ELAPSED TIME</th>
-                <th className="p-4 text-center">SCORE</th>
+                <th className="p-4 text-center">SAVED SCORE</th>
                 <th className="p-4">GRADING</th>
                 <th className="p-4 text-right">DOSSIER VIEW</th>
               </tr>
@@ -161,7 +179,7 @@ export default function Submissions() {
                   <td className="p-4 text-white font-mono flex items-center gap-1">
                     <Clock className="w-3 h-3 text-detective-crimson" /> {formatDuration(sub.duration)}
                   </td>
-                  <td className="p-4 text-center font-bold text-white font-mono">{sub.score}</td>
+                  <td className="p-4 text-center font-bold text-white font-mono">{Number(sub.score).toFixed(2)}<span className="block text-[9px] text-detective-muted">{sub.is_finalized ? "Final" : "Provisional"}</span></td>
                   <td className="p-4">
                     <span className={`px-2 py-0.5 rounded text-[8px] font-bold border uppercase ${
                       sub.is_finalized
@@ -224,9 +242,9 @@ export default function Submissions() {
                 <div className="text-center py-6 text-xs text-stone-500">
                   Decrypting field records...
                 </div>
-              ) : selectedSubAnswers.length === 0 ? (
+              ) : detailError ? (<p role="alert" className="text-red-700">{detailError}</p>) : selectedSubAnswers.length === 0 ? (
                 <div className="text-center py-6 text-xs text-stone-500 uppercase">
-                  No responses recorded in this case dossier.
+                  No responses returned. Check stored answers and admin access before grading.
                 </div>
               ) : (
                 selectedSubAnswers.map((ans, idx) => {
@@ -253,7 +271,7 @@ export default function Submissions() {
                     <div key={ans.id} className="p-4 bg-black/5 border border-black/10 rounded space-y-2">
                       <div className="font-bold text-xs flex justify-between text-stone-900">
                         <span>Q{idx + 1}. {q.question_text}</span>
-                        <span className="text-detective-crimson">({ans.score} / {q.marks} Marks)</span>
+                        <span className="text-detective-crimson">({ans.is_graded ? `${Number(ans.score).toFixed(2)} / ${q.marks} Marks` : "Pending evaluation"})</span>
                       </div>
                       
                       <div className="text-[10px] text-stone-600 uppercase font-bold">

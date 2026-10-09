@@ -10,6 +10,7 @@ import confetti from 'canvas-confetti';
 export default function Review() {
   const navigate = useNavigate();
   const { currentTeam, currentSession, participantLogout } = useAuth();
+  const [questionsLoaded, setQuestionsLoaded] = useState(false);
   const [questions, setQuestions] = useState<any[]>([]);
   const [options, setOptions] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,7 +18,7 @@ export default function Review() {
   const [isConfirming, setIsConfirming] = useState(false);
 
   // Sync draft answers
-  const { drafts, clearLocalDrafts } = useAutoSave(currentTeam?.id);
+  const { drafts, clearLocalDrafts, isDraftsLoaded, draftLoadError } = useAutoSave(currentTeam?.id);
 
   // Sync count-up timer
   const { formattedTime } = useInvestigationTimer(currentSession?.started_at);
@@ -33,26 +34,35 @@ export default function Review() {
     }
 
     async function loadQuestions() {
-      const { data: qData } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('case_id', currentTeam!.case_id)
-        .order('sort_order', { ascending: true });
+      setQuestionsLoaded(false);
+      try {
+        const { data: qData, error: qError } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('case_id', currentTeam!.case_id)
+          .order('sort_order', { ascending: true });
 
-      if (qData) setQuestions(qData);
+        if (qError) throw new Error(qError.message);
+        if (!qData?.length) throw new Error('No questions loaded for this case. Submission is blocked.');
+        setQuestions(qData);
 
-      const { data: oData } = await supabase
-        .from('question_options')
-        .select('id, question_id, option_text');
+        const { data: oData, error: oError } = await supabase
+          .from('question_options')
+          .select('id, question_id, option_text');
 
-      if (oData) setOptions(oData);
+        if (oError) throw new Error(oError.message);
+        if (oData) setOptions(oData);
+        setQuestionsLoaded(true);
+      } catch (err: any) {
+        setErrorMessage(err.message || 'Unable to load review. Reload before submitting.');
+      }
     }
 
     loadQuestions();
   }, [currentTeam, currentSession, navigate]);
 
   const handleSubmit = async () => {
-    if (!currentSession || !currentTeam) return;
+    if (!currentSession || !currentTeam || !questionsLoaded || !isDraftsLoaded || !questions.length) return;
     setIsSubmitting(true);
     setErrorMessage(null);
 
@@ -119,7 +129,7 @@ export default function Review() {
     }
   };
 
-  const isDossierComplete = questions.every((q) => {
+  const isDossierComplete = questionsLoaded && isDraftsLoaded && questions.length > 0 && questions.every((q) => {
     const d = drafts.find((dr) => dr.question_id === q.id);
     if (!d) return false;
     if (['single_choice', 'multiple_choice', 'evidence_selection'].includes(q.type)) {
@@ -218,6 +228,8 @@ export default function Review() {
           <strong>CRITICAL DEDUCTION ADVISORY:</strong> Finalizing this submission locks the case file. Under forensic protocols, answers cannot be altered after lock-in. Time elapsed is finalized server-side.
         </div>
 
+        {draftLoadError && <p role="alert" className="text-detective-crimson mb-4">{draftLoadError}</p>}
+        {(!questionsLoaded || !isDraftsLoaded) && <p className="mb-4 text-xs">Submission is unavailable until questions and saved responses load successfully.</p>}
         {/* Submission Actions */}
         <div className="flex flex-col sm:flex-row gap-4 justify-between items-center border-t border-dashed border-detective-dark/20 pt-6">
           <button
@@ -231,7 +243,7 @@ export default function Review() {
 
           <button
             onClick={() => setIsConfirming(true)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !questionsLoaded || !isDraftsLoaded}
             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-detective-crimson hover:bg-detective-alert text-white py-3 px-8 rounded font-mono uppercase tracking-wider font-bold transition-all duration-300 shadow-[0_0_15px_rgba(139,0,0,0.3)] disabled:opacity-50"
           >
             {isSubmitting ? (
@@ -256,7 +268,7 @@ export default function Review() {
             <p className="mt-3 text-xs text-stone-300 leading-relaxed">Once submitted, your answers cannot be changed. Your final score remains classified.</p>
             <div className="mt-5 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
               <button disabled={isSubmitting} onClick={() => setIsConfirming(false)} className="min-h-11 px-4 border border-detective-border text-detective-muted text-xs font-bold uppercase">Cancel</button>
-              <button disabled={isSubmitting} onClick={handleSubmit} className="min-h-11 px-4 bg-detective-crimson text-white text-xs font-bold uppercase disabled:opacity-50">{isSubmitting ? 'Submitting...' : 'Submit Final'}</button>
+              <button disabled={isSubmitting || !questionsLoaded || !isDraftsLoaded} onClick={handleSubmit} className="min-h-11 px-4 bg-detective-crimson text-white text-xs font-bold uppercase disabled:opacity-50">{isSubmitting ? 'Submitting...' : 'Submit Final'}</button>
             </div>
           </div>
         </div>

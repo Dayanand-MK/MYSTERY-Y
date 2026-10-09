@@ -767,6 +767,14 @@ class MockSupabaseClient {
           return { data: { success: false, error: 'SUBMISSION ALREADY FINALIZED' }, error: null };
         }
 
+        const caseQuestions = db.query<any>('questions').filter((q: any) => q.case_id === session.case_id);
+        if (!Array.isArray(p_client_answers) || !p_client_answers.length ||
+            p_client_answers.length !== caseQuestions.length ||
+            new Set(p_client_answers.map((a: any) => a.question_id)).size !== caseQuestions.length ||
+            p_client_answers.some((a: any) => !caseQuestions.some((q: any) => q.id === a.question_id))) {
+          return { data: { success: false, error: 'QUESTION LIST EMPTY OR INCOMPLETE. RELOAD THE REVIEW' }, error: null };
+        }
+
         const nowStr = new Date().toISOString();
         const startMs = new Date(session.started_at).getTime();
         const endMs = new Date(nowStr).getTime();
